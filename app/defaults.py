@@ -39,6 +39,10 @@ DEFAULT_CONFIG = {
         },
     ],
     "targets": [],
+    "admin": {
+        "password": "arona-admin",
+        "off_seconds": 3600,
+    },
     "wechat": {
         "backend": "auto",
         "poll_interval": 2.5,

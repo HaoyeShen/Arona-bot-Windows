@@ -365,6 +365,39 @@ class MemoryStore:
         except sqlite3.Error as exc:
             return False, str(exc)
 
+    def snapshot_chat(self, chat: str) -> dict:
+        """Return a serializable snapshot for admin-session rollback."""
+        with self._lock:
+            messages = [dict(row) for row in self._conn.execute(
+                "SELECT * FROM messages WHERE chat=? ORDER BY id", (chat,))]
+            seen = [dict(row) for row in self._conn.execute(
+                "SELECT * FROM seen WHERE chat=?", (chat,))]
+        return {"messages": messages, "seen": seen}
+
+    def restore_chat(self, chat: str, snapshot: dict) -> None:
+        """Restore a snapshot taken before an admin session."""
+        messages = snapshot.get("messages", []) if isinstance(snapshot, dict) else []
+        seen = snapshot.get("seen", []) if isinstance(snapshot, dict) else []
+        columns = ("id", "chat", "role", "sender", "content", "msg_type",
+                   "sticker_name", "external_id", "profile_name", "latency_ms",
+                   "meta", "created_at", "created_iso")
+        with self._lock:
+            self._conn.execute("DELETE FROM messages WHERE chat=?", (chat,))
+            self._conn.execute("DELETE FROM seen WHERE chat=?", (chat,))
+            for row in messages:
+                values = tuple(row.get(column) for column in columns)
+                placeholders = ",".join("?" for _ in columns)
+                self._conn.execute(
+                    f"INSERT INTO messages({','.join(columns)}) VALUES({placeholders})",
+                    values,
+                )
+            for row in seen:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO seen(fingerprint,chat,ts) VALUES(?,?,?)",
+                    (row.get("fingerprint"), chat, row.get("ts", time.time())),
+                )
+            self._conn.commit()
+
     def clear(self, chat: str | None = None) -> int:
         with self._lock:
             if chat:

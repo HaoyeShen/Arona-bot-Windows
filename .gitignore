@@ -17,3 +17,5 @@ data/training/
 data/training.db*
 
 data/images/
+
+data/admin_state.json

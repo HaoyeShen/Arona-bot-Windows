@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import random
@@ -18,7 +19,7 @@ from .memory import MemoryStore
 from .training import TrainingStore
 from .understanding import understand_message
 from .model_client import ModelClient, ModelError, make_client
-from .paths import ROOT
+from .paths import DATA, ROOT
 from .prompting import (
     at_mentioned,
     build_compact_system_prompt,
@@ -47,7 +48,8 @@ DEBUG_CHAT = "调试台"
 
 class BotService:
     def __init__(self, config: ConfigStore, personas: PersonaStore, stickers: StickerStore,
-                 memory: MemoryStore, training: TrainingStore | None = None) -> None:
+                 memory: MemoryStore, training: TrainingStore | None = None,
+                 admin_state_path: Path | None = None) -> None:
         self.config = config
         self.personas = personas
         self.stickers = stickers
@@ -70,6 +72,13 @@ class BotService:
         self._sent_lock = threading.Lock()
         self._stats = self.memory.stats()
         self._image_cache: dict[str, str] = {}
+        self._admin_lock = threading.RLock()
+        self._admin_sessions: dict[tuple[str, str], dict] = {}
+        self._admin_challenges: dict[tuple[str, str], float] = {}
+        self._muted_until: dict[str, float] = {}
+        self._mute_timers: dict[str, threading.Timer] = {}
+        self._admin_state_path = Path(admin_state_path) if admin_state_path else (DATA / "admin_state.json")
+        self._load_admin_state()
         self._balance_lock = threading.Lock()
         self._balance_busy = False
         self._balance: dict[str, Any] = {
@@ -267,6 +276,15 @@ class BotService:
             self._worker.join(timeout=join_timeout)
         self._worker = None
         self._supervisor = None
+        with self._admin_lock:
+            for timer in self._mute_timers.values():
+                try:
+                    timer.cancel()
+                except Exception:
+                    pass
+            self._mute_timers.clear()
+            self._admin_sessions.clear()
+            self._admin_challenges.clear()
         log.info("机器人已停止")
         self.emit("stopped", {})
 
@@ -365,6 +383,252 @@ class BotService:
             log.warning("图片理解失败：%s", exc)
             return ""
 
+    # ------------------------------------------------------------- admin commands
+    @staticmethod
+    def _admin_text(raw: object) -> str:
+        """Command text that deliberately ignores the configured WeChat nickname."""
+        text = str(raw or "").strip()
+        text = re.sub(r"^\s*wxid_[A-Za-z0-9_]+:\s*", "", text)
+        # Allow "@阿洛娜 /admin" without depending on the configured nickname.
+        text = re.sub(r"^@\S+\s+(?=/)", "", text)
+        return text.strip()
+
+    def _admin_key(self, incoming: IncomingMessage) -> tuple[str, str]:
+        # Manual messages typed by the teacher from the bot account must be
+        # able to authenticate too, independently of the display nickname.
+        if incoming.direction == "out" or incoming.is_self:
+            return incoming.chat, "__self__"
+        raw = incoming.raw if isinstance(incoming.raw, dict) else {}
+        sender_id = str(raw.get("sender_username") or incoming.sender or "").strip()
+        return incoming.chat, sender_id
+
+    def _load_admin_state(self) -> None:
+        try:
+            if not self._admin_state_path.exists():
+                return
+            payload = json.loads(self._admin_state_path.read_text(encoding="utf-8"))
+            muted = payload.get("muted", {}) if isinstance(payload, dict) else {}
+            now = time.time()
+            for chat, until in muted.items():
+                try:
+                    until = float(until)
+                except (TypeError, ValueError):
+                    continue
+                if until > now:
+                    self._muted_until[str(chat)] = until
+                    self._schedule_mute(str(chat), until)
+            log.info("管理员状态已加载：暂停回复会话 %d 个", len(self._muted_until))
+        except Exception as exc:
+            log.warning("读取管理员状态失败：%s", exc)
+
+    def _persist_admin_state(self) -> None:
+        try:
+            now = time.time()
+            payload = {"muted": {chat: until for chat, until in self._muted_until.items()
+                                 if until > now}}
+            self._admin_state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._admin_state_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                                 encoding="utf-8")
+            temporary.replace(self._admin_state_path)
+        except Exception as exc:
+            log.warning("保存管理员状态失败：%s", exc)
+
+    def _schedule_mute(self, chat: str, until: float) -> None:
+        old = self._mute_timers.pop(chat, None)
+        if old is not None:
+            try:
+                old.cancel()
+            except Exception:
+                pass
+        timer = threading.Timer(max(0.0, until - time.time()),
+                                self._expire_mute, args=(chat,))
+        timer.daemon = True
+        self._mute_timers[chat] = timer
+        timer.start()
+
+    def _expire_mute(self, chat: str) -> None:
+        with self._admin_lock:
+            until = self._muted_until.get(chat, 0.0)
+            if until and time.time() < until:
+                self._schedule_mute(chat, until)
+                return
+            self._muted_until.pop(chat, None)
+            self._mute_timers.pop(chat, None)
+            self._persist_admin_state()
+        log.info("暂停回复到期，已恢复智能回复：%s", chat)
+        self._send_admin_text(chat, "已恢复回复")
+
+    def _set_mute(self, chat: str, seconds: int | None = None) -> None:
+        try:
+            duration = int(seconds or self.config.data.get("admin", {}).get("off_seconds", 3600))
+        except (TypeError, ValueError):
+            duration = 3600
+        duration = max(10, min(86400, duration))
+        until = time.time() + duration
+        with self._admin_lock:
+            self._muted_until[chat] = until
+            self._schedule_mute(chat, until)
+
+    def _restore_mute(self, chat: str, before: float) -> None:
+        with self._admin_lock:
+            old = self._mute_timers.pop(chat, None)
+            if old is not None:
+                try:
+                    old.cancel()
+                except Exception:
+                    pass
+            if before > time.time():
+                self._muted_until[chat] = before
+                self._schedule_mute(chat, before)
+            else:
+                self._muted_until.pop(chat, None)
+
+    def _is_muted(self, chat: str) -> bool:
+        with self._admin_lock:
+            until = self._muted_until.get(chat, 0.0)
+            if not until:
+                return False
+            if until > time.time():
+                return True
+            self._muted_until.pop(chat, None)
+            self._mute_timers.pop(chat, None)
+            self._persist_admin_state()
+            return False
+
+    def _send_admin_text(self, chat: str, text: str) -> bool:
+        adapter = self._adapter
+        if adapter is None:
+            log.warning("管理员消息未发送（适配器未连接）：%s", chat)
+            return False
+        try:
+            result = adapter.send_text(chat, text)
+        except Exception as exc:
+            log.warning("管理员消息发送异常：%s", exc)
+            return False
+        if result.ok:
+            self._remember_bot_sent(chat, text)
+            log.info("管理员消息已发送 · %s · %s", chat, text.replace("\n", " ")[:120])
+        else:
+            log.warning("管理员消息发送失败：%s · %s %s", chat, result.message, result.detail)
+        return bool(result.ok)
+
+    def _debug_text(self, chat: str) -> str:
+        profile = self.config.active_profile()
+        model = str(profile.get("model") or profile.get("provider") or "未知")
+        context = self.memory.context_count(chat)
+        paused = self._is_muted(chat)
+        return (f"【调试】会话={chat}｜模型={model}｜上下文={context}"
+                f"｜回复={'暂停' if paused else '开启'}｜监听=运行中")
+
+    def _enter_admin(self, chat: str, key: tuple[str, str], sender: str) -> None:
+        session = {
+            "sender": sender,
+            "sender_key": key[1],
+            "snapshot": self.memory.snapshot_chat(chat),
+            "muted_before": self._muted_until.get(chat, 0.0),
+            "pending_end": False,
+        }
+        with self._admin_lock:
+            self._admin_sessions[key] = session
+            self._admin_challenges.pop(key, None)
+        log.info("管理员模式已开启 · %s · 发送者=%s", chat, sender)
+        self._send_admin_text(chat, "已进入管理员模式")
+
+    def _exit_admin(self, key: tuple[str, str]) -> None:
+        with self._admin_lock:
+            self._admin_sessions.pop(key, None)
+        log.info("管理员模式已退出 · %s", key[0])
+        self._send_admin_text(key[0], "已退出管理员模式")
+
+    def _handle_admin_message(self, incoming: IncomingMessage, content: str) -> bool:
+        text = (content or "").strip()
+        if not text:
+            return False
+        key = self._admin_key(incoming)
+        chat = incoming.chat
+        command = text.lower()
+        with self._admin_lock:
+            session = self._admin_sessions.get(key)
+            if session is not None:
+                return self._handle_admin_command(incoming, session, text)
+            # While the bot is in admin mode it pauses all conversations and
+            # only the authenticated sender can act.
+            if self._admin_sessions:
+                log.info("管理员模式下忽略其他会话/发送者：%s", chat)
+                return True
+            challenge = self._admin_challenges.get(key)
+            if challenge is not None:
+                if time.time() > challenge:
+                    self._admin_challenges.pop(key, None)
+                elif text == str(self.config.data.get("admin", {}).get("password", "")):
+                    self._enter_admin(chat, key, incoming.sender)
+                    return True
+                elif command == "/admin":
+                    self._admin_challenges[key] = time.time() + 180
+                    self._send_admin_text(chat, "阿洛娜收到，请输入管理员密码:")
+                    return True
+                else:
+                    self._admin_challenges.pop(key, None)
+                    self._send_admin_text(chat, "密码错误，已退出管理员验证。")
+                    return True
+            if command == "/admin":
+                self._admin_challenges[key] = time.time() + 180
+                log.info("管理员验证已请求 · %s · 发送者=%s", chat, incoming.sender)
+                self._send_admin_text(chat, "阿洛娜收到，请输入管理员密码:")
+                return True
+        return False
+
+    def _handle_admin_command(self, incoming: IncomingMessage, session: dict, text: str) -> bool:
+        chat = incoming.chat
+        key = self._admin_key(incoming)
+        command = text.lower()
+        if session.get("pending_end"):
+            if command == "/yes":
+                self._persist_admin_state()
+                self._send_admin_text(chat, "修改已保存")
+                self._exit_admin(key)
+                return True
+            if command == "/no":
+                self.memory.restore_chat(chat, session.get("snapshot", {}))
+                self._restore_mute(chat, float(session.get("muted_before", 0.0)))
+                self._persist_admin_state()
+                self._send_admin_text(chat, "刚才的一切指令已失效")
+                self._exit_admin(key)
+                return True
+            self._send_admin_text(chat, "请回复 /yes 或 /no")
+            return True
+        if command == "/end":
+            session["pending_end"] = True
+            self._send_admin_text(chat, "是否保存刚刚的修改？回复 /yes 保存，回复 /no 放弃。")
+            return True
+        if command == "/reset":
+            self.memory.clear(chat)
+            self._send_admin_text(chat, "已清空当前聊天的上下文记忆")
+            log.info("管理员清空上下文 · %s", chat)
+            return True
+        if command == "/test":
+            self._send_admin_text(chat, self._debug_text(chat))
+            return True
+        if command == "/off":
+            self._set_mute(chat)
+            self._send_admin_text(chat, "已暂时关闭回复一小时")
+            log.info("管理员暂停智能回复 · %s", chat)
+            return True
+        if command == "/start":
+            if self._is_muted(chat):
+                self._restore_mute(chat, 0.0)
+                self._send_admin_text(chat, "已开启机器人对当前聊天调用API或本地模型的智能回复")
+                log.info("管理员恢复智能回复 · %s", chat)
+            else:
+                self._send_admin_text(chat, "已经在运行了")
+            return True
+        if command == "/admin":
+            self._send_admin_text(chat, "已经进入管理员模式")
+            return True
+        self._send_admin_text(chat, "未知管理员指令。可用：/reset /test /off /start /end")
+        return True
+
     def _handle_incoming(self, incoming: IncomingMessage) -> None:
         target = self.config.target_by_name(incoming.chat)
         if not target or not target.get("enabled"):
@@ -388,7 +652,20 @@ class BotService:
         # or messages the teacher typed manually. Store manual ones as context,
         # but never pass either through the reply pipeline.
         if incoming.direction == "out" or incoming.is_self:
+            # A manually typed command from the bot account is allowed, but
+            # echoes of the bot's own replies must never be treated as commands.
+            if not self._is_bot_echo(incoming.chat, content):
+                if self._handle_admin_message(incoming, self._admin_text(raw_content)):
+                    return
             self._handle_outgoing(incoming, content)
+            return
+
+        # Admin commands are detected from the raw text and never depend on
+        # the user-configured "my WeChat nickname" (self_name).
+        if self._handle_admin_message(incoming, self._admin_text(raw_content)):
+            return
+        if self._is_muted(incoming.chat):
+            log.info("该聊天已暂停智能回复，忽略消息：%s", incoming.chat)
             return
 
         if incoming.image_path and msg_type == "image":

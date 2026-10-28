@@ -78,7 +78,7 @@ def test_prompt_and_stickers() -> None:
     assert_true("阿洛娜" in system and "sticker:" in system, "persona + sticker prompt")
     compact = build_compact_system_prompt(persona, stickers, target_name="文件传输助手",
                                           max_chars=180)
-    assert_true("阿洛娜" in compact and "开心转圈" in compact and "sticker:" in compact,
+    assert_true("阿洛娜" in compact and stickers[0]["name"] in compact and "sticker:" in compact,
                 "compact persona + sticker prompt")
     assert_true(len(compact) < len(system), "compact prompt is shorter")
     assert_true("绝不能自称" in system and "自称只能用" in compact,
@@ -91,8 +91,9 @@ def test_prompt_and_stickers() -> None:
                                          target_type="friend")
     assert_true("当前是私聊：对方是老师" in private_system,
                 "private address rule")
-    text, chosen = parse_reply("老师辛苦啦，早点休息。\n[sticker:困困打盹]", stickers)
-    assert_true(chosen and chosen["name"] == "困困打盹", "parse sticker tag")
+    first_name = stickers[0]["name"]
+    text, chosen = parse_reply(f"老师辛苦啦，早点休息。\n[sticker:{first_name}]", stickers)
+    assert_true(chosen and chosen["name"] == first_name, "parse sticker tag")
     assert_true("[sticker" not in text, "tag removed from text")
     text2, chosen2 = parse_reply("好耶！[sticker:不存在的表情]", stickers)
     assert_true(chosen2 is None and "sticker" not in text2, "unknown sticker dropped")
@@ -133,22 +134,23 @@ def test_prompt_and_stickers() -> None:
 
     assert_true(IncomingMessage("c", "s", "x", direction="out", attr="friend").is_self,
                 "outgoing message is self")
-    fallback = select_fallback_sticker(stickers, "老师晚安", "做个好梦", probability=1.0)
+    fallback = select_fallback_sticker(stickers, "老师，我好委屈", "想哭", probability=1.0)
     assert_true(fallback is not None, "fallback sticker")
-    assert_true(resolve_sticker("挥手", stickers)["name"] == "挥手问候", "partial sticker name")
+    partial = first_name[:1]
+    assert_true(resolve_sticker(partial, stickers)["name"] == first_name, "partial sticker name")
     annotated_text, annotated_sticker = parse_reply(
-        "嘿嘿，老师好开心～[挥手]（同时发送了表情包「挥手问候」）", stickers
+        f"嘿嘿，老师好开心～[{first_name}]（同时发送了表情包「{first_name}」）", stickers
     )
-    assert_true(annotated_sticker and annotated_sticker["name"] == "挥手问候",
+    assert_true(annotated_sticker and annotated_sticker["name"] == first_name,
                 "bare sticker + Chinese annotation selects sticker")
-    assert_true("[挥手]" not in annotated_text and "同时发送" not in annotated_text,
+    assert_true(f"[{first_name}]" not in annotated_text and "同时发送" not in annotated_text,
                 "sticker/annotation removed from text")
     assert_true(annotated_text.startswith("嘿嘿，阿洛娜好开心"),
                 "self-reference fixed together with sticker")
-    bare_text, bare_sticker = parse_reply("老师，阿洛娜在哦～[挥手问候]", stickers)
-    assert_true(bare_sticker and bare_sticker["name"] == "挥手问候",
+    bare_text, bare_sticker = parse_reply(f"老师，阿洛娜在哦～[{first_name}]", stickers)
+    assert_true(bare_sticker and bare_sticker["name"] == first_name,
                 "bare exact sticker name")
-    assert_true("[挥手问候]" not in bare_text, "bare sticker tag removed")
+    assert_true(f"[{first_name}]" not in bare_text, "bare sticker tag removed")
     plain_text, plain_sticker = parse_reply("老师，这是[图片]，不要动。", stickers)
     assert_true(plain_sticker is None and "[图片]" in plain_text,
                 "unknown bracket is preserved")

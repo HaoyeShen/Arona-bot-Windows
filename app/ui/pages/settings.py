@@ -191,6 +191,26 @@ class SettingsPage(BasePage):
                  bg=C["card"], fg=C["muted"], font=font(7), justify="left",
                  anchor="w", wraplength=px(420)).pack(fill="x", pady=(px(3), 0))
 
+        admin_card = Card(right, padding=16, accent=C["cyan"])
+        admin_card.pack(fill="x", pady=(px(12), 0))
+        SectionHeading(admin_card.body, "管理员指令", "只接受正确密码的发送者").pack(
+            fill="x", pady=(0, px(10))
+        )
+        self.admin_password = LabeledEntry(
+            admin_card.body, "管理员密码",
+            str(self.config.data.get("admin", {}).get("password", "arona-admin")),
+            hint="发送 /admin 后输入", width=24,
+        )
+        self.admin_password.pack(fill="x", pady=(0, px(6)))
+        tk.Label(
+            admin_card.body,
+            text="命令：/admin 验证 · /reset 清空当前上下文 · /test 调试信息 · "
+                 "/off 暂停一小时 · /start 恢复 · /end 保存并退出。\n"
+                 "管理员模式下会暂停该会话的智能回复与 API 调用；只有验证通过的发送者能下指令。",
+            bg=C["card"], fg=C["muted"], font=font(7), justify="left", anchor="w",
+            wraplength=px(420),
+        ).pack(fill="x", pady=(px(4), 0))
+
         privacy = Card(right, padding=16)
         privacy.pack(fill="x", pady=(px(12), 0))
         SectionHeading(privacy.body, "隐私与日志", "数据留在本机").pack(fill="x", pady=(0, px(10)))
@@ -290,6 +310,11 @@ class SettingsPage(BasePage):
             "self_name": self.self_name.get(),
         })
         self.config.ui["confirm_close"] = self.confirm_close.get()
+        admin_password = self.admin_password.get().strip()
+        if not admin_password:
+            self.app.toast("管理员密码不能为空。", "error")
+            return
+        self.config.data.setdefault("admin", {})["password"] = admin_password
         self.config.save()
         self.service.reload_config()
         self.status.configure(text="已保存 · " + datetime.now().strftime("%H:%M:%S"),

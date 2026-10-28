@@ -90,9 +90,15 @@ class ConfigStore:
 
     def _normalise(self) -> None:
         data = self.data
-        for section in ("bot", "wechat", "training", "ui", "privacy"):
+        for section in ("bot", "admin", "wechat", "training", "ui", "privacy"):
             if not isinstance(data.get(section), dict):
                 data[section] = copy.deepcopy(DEFAULT_CONFIG[section])
+        admin = data.setdefault("admin", {})
+        admin["password"] = str(admin.get("password") or "arona-admin")
+        try:
+            admin["off_seconds"] = max(10, min(86400, int(admin.get("off_seconds", 3600))))
+        except (TypeError, ValueError):
+            admin["off_seconds"] = 3600
         bot = data.setdefault("bot", {})
         bot["auto_start"] = bool(bot.get("auto_start", True))
         bot["group_at_always_reply"] = bool(bot.get("group_at_always_reply", True))
@@ -306,6 +312,8 @@ class ConfigStore:
         data = copy.deepcopy(self.data)
         for profile in data.get("model_profiles", []):
             profile["api_key_enc"] = "***" if profile.get("api_key_enc") else ""
+        if isinstance(data.get("admin"), dict):
+            data["admin"]["password"] = "***"
         return data
 
 
