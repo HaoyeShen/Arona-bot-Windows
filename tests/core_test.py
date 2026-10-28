@@ -84,12 +84,12 @@ def test_prompt_and_stickers() -> None:
     assert_true("绝不能自称" in system and "自称只能用" in compact,
                 "self-reference rules present")
     group_system = build_system_prompt(persona, stickers, target_name="测试群",
-                                       target_type="group")
-    assert_true("除你之外的所有人都是老师" in group_system and "不要直呼昵称" in group_system,
+                                       target_type="group", recipient_name="小明")
+    assert_true("小明老师" in group_system and "微信昵称+老师" in group_system,
                 "group address rule")
     private_system = build_system_prompt(persona, stickers, target_name="文件传输助手",
-                                         target_type="friend")
-    assert_true("当前是私聊：对方是老师" in private_system,
+                                         target_type="friend", recipient_name="赵军情")
+    assert_true("赵军情老师" in private_system,
                 "private address rule")
     first_name = stickers[0]["name"]
     text, chosen = parse_reply(f"老师辛苦啦，早点休息。\n[sticker:{first_name}]", stickers)
@@ -120,15 +120,15 @@ def test_prompt_and_stickers() -> None:
          "meta": {"direction": "in"}},
     ]
     labelled = build_context_messages(manual_history, target_type="group", min_messages=2)
-    assert_true("老师本人手动发出" in labelled[0]["content"], "manual outgoing is labelled")
-    assert_true(labelled[1]["content"].startswith("[老师]"),
-                "all group participants are labelled 老师")
+    assert_true("我本人手动发出" in labelled[0]["content"], "manual outgoing is labelled")
+    assert_true(labelled[1]["content"].startswith("[小明老师]"),
+                "group participants are labelled nickname+老师")
     labelled_friend = build_context_messages([
-        {"role": "user", "sender": "老师", "content": "你好"},
+        {"role": "user", "sender": "赵军情", "content": "你好"},
         {"role": "assistant", "sender": "阿洛娜", "content": "老师，阿洛娜在哦。"},
     ], target_type="friend", min_messages=2)
-    assert_true(labelled_friend[0]["content"].startswith("[老师]"),
-                "private participant is labelled 老师")
+    assert_true(labelled_friend[0]["content"].startswith("[赵军情老师]"),
+                "private participant is labelled nickname+老师")
     assert_true(labelled_friend[1]["content"].startswith("[阿洛娜]"),
                 "assistant input is labelled")
 

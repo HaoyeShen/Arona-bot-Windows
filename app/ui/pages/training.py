@@ -305,7 +305,8 @@ class TrainingPage(BasePage):
                     ),
                 )
             except Exception as exc:
-                self.after(0, lambda: self._finish_job("上传失败", None, str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._finish_job("上传失败", None, message))
                 return
             self.after(0, lambda: self._finish_upload(result))
 
@@ -360,7 +361,8 @@ class TrainingPage(BasePage):
                     ),
                 )
             except Exception as exc:
-                self.after(0, lambda: self._finish_job("重建失败", None, str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._finish_job("重建失败", None, message))
                 return
             self.after(0, lambda: self._finish_reindex(result))
 
@@ -453,7 +455,8 @@ class TrainingPage(BasePage):
                 )
                 self.after(0, lambda: self._show_test_result(query, hits))
             except Exception as exc:
-                self.after(0, lambda: self._show_test_result(query, [], str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message, query=query: self._show_test_result(query, [], message))
 
         threading.Thread(target=worker, daemon=True, name="arona-training-test").start()
 

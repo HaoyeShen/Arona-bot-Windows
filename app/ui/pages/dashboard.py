@@ -470,7 +470,8 @@ class DashboardPage(BasePage):
                 result = self.service.debug_chat(text, chat_name="控制台速聊")
                 self.after(0, lambda: self._show_quick(result))
             except Exception as exc:
-                self.after(0, lambda: self._quick_error(str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._quick_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 

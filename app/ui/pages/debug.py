@@ -341,7 +341,8 @@ class DebugPage(BasePage):
                                                  persist=persist)
                 self.after(0, lambda: self._show_result(result))
             except Exception as exc:
-                self.after(0, lambda: self._show_error(str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._show_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -408,7 +409,8 @@ class DebugPage(BasePage):
                                                   progress=progress_cb)
                 self.after(0, lambda: self._diagnostics_done(result))
             except Exception as exc:
-                self.after(0, lambda: self._diagnostics_error(str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._diagnostics_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 

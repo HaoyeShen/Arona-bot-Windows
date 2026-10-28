@@ -132,7 +132,33 @@ class ModelClient:
         if self.provider == "ollama" and self.base_url.startswith(("http://127.0.0.1",
                                                                    "http://localhost")):
             return urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        return urllib.request.build_opener()
+
+        # Windows/Python can retain a stale system proxy (for example a local
+        # Clash/V2Ray port that is no longer listening).  Chrome and curl then
+        # work while urllib fails with WinError 10061.  Only use proxies whose
+        # TCP endpoint is actually reachable; otherwise go direct.
+        try:
+            configured = urllib.request.getproxies()
+            usable = {}
+            for scheme, value in configured.items():
+                if scheme == "no" or not value:
+                    continue
+                try:
+                    parsed = urllib.parse.urlparse(str(value))
+                    host = parsed.hostname or ""
+                    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                    if not host:
+                        continue
+                    with socket.create_connection((host, port), timeout=0.35):
+                        usable[scheme] = str(value)
+                except OSError:
+                    log.debug("忽略不可用的系统代理：%s=%s", scheme, value)
+            if usable:
+                return urllib.request.build_opener(urllib.request.ProxyHandler(usable))
+            return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        except Exception as exc:
+            log.debug("读取系统代理失败，改为直连：%s", exc)
+            return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def _request(self, url: str, method: str = "GET", payload: dict | None = None,
                  timeout: int | None = None) -> Any:

@@ -383,7 +383,8 @@ class MainWindow:
                     ("模型连接正常：" if result["ok"] else "模型连接失败：") + result["message"],
                     "success" if result["ok"] else "error"))
             except Exception as exc:
-                self.root.after(0, lambda: self.toast.show("健康检查失败：" + str(exc), "error"))
+                message = str(exc)
+                self.root.after(0, lambda message=message: self.toast.show("健康检查失败：" + message, "error"))
 
         threading.Thread(target=worker, daemon=True).start()
 

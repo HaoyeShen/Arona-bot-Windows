@@ -922,7 +922,9 @@ class BotService:
                 data["updated"] = time.time()
                 data["model_id"] = model_id
             except Exception as exc:
-                data = {"ok": False, "available": None, "text": f"余额查询失败：{exc}",
+                detail = str(getattr(exc, "detail", "") or "").strip()
+                text = f"余额查询失败：{exc}" + (f"（{detail}）" if detail else "")
+                data = {"ok": False, "available": None, "text": text,
                         "note": "", "updated": time.time(), "model_id": model_id}
             with self._balance_lock:
                 self._balance = data
@@ -952,7 +954,8 @@ class BotService:
         if profile.get("compact_prompt"):
             system = build_compact_system_prompt(
                 persona, stickers, target_name=incoming.chat,
-                target_type=incoming.chat_type, max_chars=max_chars,
+                target_type=incoming.chat_type, recipient_name=incoming.sender,
+                max_chars=max_chars,
                 max_sentence_chars=max_sentence_chars,
                 stickers_enabled=bool(stickers),
                 training_block=training_block,
@@ -963,6 +966,7 @@ class BotService:
                 stickers,
                 target_name=incoming.chat,
                 target_type=incoming.chat_type,
+                recipient_name=incoming.sender,
                 bot_name=self._adapter.self_name if self._adapter else "阿洛娜",
                 max_chars=max_chars,
                 max_sentence_chars=max_sentence_chars,
@@ -1180,6 +1184,7 @@ class BotService:
         if profile.get("compact_prompt"):
             system = build_compact_system_prompt(
                 persona, stickers, target_name="调试台", target_type="friend",
+                recipient_name="老师",
                 max_chars=max_chars, max_sentence_chars=max_sentence_chars,
                 stickers_enabled=bool(stickers),
                 training_block=training_block,
@@ -1187,6 +1192,7 @@ class BotService:
         else:
             system = build_system_prompt(
                 persona, stickers, target_name="调试台", target_type="friend",
+                recipient_name="老师",
                 bot_name=self.config.wechat.get("self_name") or "阿洛娜",
                 max_chars=max_chars, max_sentence_chars=max_sentence_chars,
                 stickers_enabled=bool(stickers),

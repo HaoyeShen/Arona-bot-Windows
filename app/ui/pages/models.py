@@ -294,7 +294,8 @@ class ModelDialog(BaseDialog):
                 text = health.message + (f"\n{health.detail}" if health.detail else "")
                 self.after(0, lambda: self._test_done(health.ok, text, health.models))
             except Exception as exc:
-                self.after(0, lambda: self._test_done(False, str(exc), []))
+                message = str(exc)
+                self.after(0, lambda message=message: self._test_done(False, message, []))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -322,7 +323,8 @@ class ModelDialog(BaseDialog):
                 models = make_client(profile).list_models()
                 self.after(0, lambda: self._models_done(models))
             except Exception as exc:
-                self.after(0, lambda: self._models_error(str(exc)))
+                message = str(exc)
+                self.after(0, lambda message=message: self._models_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -552,7 +554,8 @@ class ModelsPage(BasePage):
                     ("连接成功：" if result["ok"] else "连接失败：") + result["message"],
                     "success" if result["ok"] else "error"))
             except Exception as exc:
-                self.after(0, lambda: self.app.toast("测试失败：" + str(exc), "error"))
+                message = str(exc)
+                self.after(0, lambda message=message: self.app.toast("测试失败：" + message, "error"))
 
         threading.Thread(target=worker, daemon=True).start()
 
