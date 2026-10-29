@@ -44,6 +44,14 @@ DEFAULT_CONFIG = {
         "allowed": ["__self__"],
         "off_seconds": 3600,
     },
+    "news": {
+        "enabled": False,
+        "send_time": "06:50",
+        "target_chat": "",
+        "max_items": 2,
+        "timeout": 10,
+        "use_model_summary": True,
+    },
     "wechat": {
         "backend": "auto",
         "poll_interval": 2.5,

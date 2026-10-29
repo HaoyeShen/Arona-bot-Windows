@@ -19,6 +19,7 @@ from .memory import MemoryStore
 from .training import TrainingStore
 from .understanding import understand_message
 from .model_client import ModelClient, ModelError, make_client
+from .news import NewsService
 from .paths import DATA, ROOT
 from .prompting import (
     address_name,
@@ -75,6 +76,7 @@ class BotService:
         self._image_cache: dict[str, str] = {}
         self._summary_lock = threading.Lock()
         self._summary_last: dict[str, float] = {}
+        self.news = NewsService(config, personas, usage_callback=self._record_usage)
         self._admin_lock = threading.RLock()
         self._admin_sessions: dict[tuple[str, str], dict] = {}
         self._admin_challenges: dict[tuple[str, str], float] = {}
@@ -191,6 +193,8 @@ class BotService:
                                                 daemon=True)
             self._supervisor.start()
             threading.Thread(target=self._summary_loop, name="arona-summary",
+                             daemon=True).start()
+            threading.Thread(target=self._news_loop, name="arona-news",
                              daemon=True).start()
             self.emit("started", {"targets": [t["name"] for t in targets]})
             return True
@@ -977,6 +981,43 @@ class BotService:
         else:
             history = self.memory.recent(chat, limit)
         return history, summary_text
+
+    # ----------------------------------------------------------- kivotos news
+    def _news_loop(self) -> None:
+        while self._running and not self._stop_event.wait(25):
+            try:
+                self._news_tick()
+            except Exception as exc:
+                log.debug("基沃托斯新闻定时检查失败：%s", exc)
+
+    def _news_tick(self) -> None:
+        if not self.news.enabled:
+            return
+        target = self.news.target_chat
+        if not target:
+            return
+        if self._admin_sessions or self._is_muted(target):
+            return
+        adapter = self.adapter
+        if not adapter:
+            return
+        result = self.news.run(adapter)
+        if result.get("sent"):
+            self.emit("news", {"target": target, "message": result.get("message", "")})
+        elif result.get("reason") not in {
+            "功能关闭", "未设置发送群聊", "还没到发送时间",
+            "今天已经发送过", "上次尝试失败，稍后重试",
+        }:
+            log.info("基沃托斯新闻本次未发送 · %s", result.get("reason"))
+
+    def send_news_now(self) -> dict:
+        adapter = self.adapter
+        if not adapter:
+            raise RuntimeError("机器人尚未连接微信")
+        return self.news.run(adapter, force=True)
+
+    def preview_news(self) -> dict:
+        return self.news.preview()
 
     def _summary_loop(self) -> None:
         while self._running and not self._stop_event.wait(15):

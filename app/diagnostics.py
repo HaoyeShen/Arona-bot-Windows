@@ -440,7 +440,8 @@ def run_diagnostics(service, run_model: bool = True, run_chat_test: bool = False
         checks.append(_check(
             "实时监听状态",
             "ok" if ok else "warn",
-            message + f" · {service.adapter.backend_label} · 监听 {len(service.adapter._chats)} 个对象",
+            message + f" · {service.adapter.backend_label} · 监听 "
+            f"{len(service.config.enabled_targets())} 个对象",
             "" if ok else "点击「重启机器人」重新建立 UI Automation 连接",
         ))
     else:

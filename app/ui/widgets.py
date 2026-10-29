@@ -607,10 +607,13 @@ class BaseDialog(tk.Toplevel):
                          font=font(18), cursor="hand2", padx=px(16))
         close.pack(side="right", fill="y")
         close.bind("<Button-1>", lambda _e: self.close())
+        # Reserve the footer before the expanding body.  Packing the body
+        # first could starve the footer when a dialog grows taller than its
+        # requested height, leaving the save/cancel buttons as thin bars.
+        self.footer = tk.Frame(shell, bg=C["card_soft"], height=px(62))
+        self.footer.pack(side="bottom", fill="x")
         self.body = tk.Frame(shell, bg=C["card"])
         self.body.pack(fill="both", expand=True)
-        self.footer = tk.Frame(shell, bg=C["card_soft"], height=px(62))
-        self.footer.pack(fill="x")
         tk.Frame(self.footer, bg=C["line"], height=1).pack(fill="x", side="top")
         self._footer_inner = tk.Frame(self.footer, bg=C["card_soft"])
         self._footer_inner.pack(fill="both", expand=True, padx=px(16), pady=px(12))

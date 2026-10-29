@@ -101,6 +101,26 @@ class ConfigStore:
         if not isinstance(allowed, list):
             allowed = ["__self__"]
         admin["allowed"] = [str(item).strip() for item in allowed if str(item).strip()] or ["__self__"]
+
+        news = data.setdefault("news", {})
+        news["enabled"] = bool(news.get("enabled", False))
+        news["send_time"] = str(news.get("send_time") or "06:50")
+        try:
+            _hour, _minute = news["send_time"].split(":", 1)
+            if not (0 <= int(_hour) <= 23 and 0 <= int(_minute) <= 59):
+                raise ValueError
+        except (TypeError, ValueError):
+            news["send_time"] = "06:50"
+        news["target_chat"] = str(news.get("target_chat") or "").strip()
+        try:
+            news["max_items"] = max(1, min(3, int(news.get("max_items", 2) or 2)))
+        except (TypeError, ValueError):
+            news["max_items"] = 2
+        try:
+            news["timeout"] = max(5.0, min(20.0, float(news.get("timeout", 10) or 10)))
+        except (TypeError, ValueError):
+            news["timeout"] = 10
+        news["use_model_summary"] = bool(news.get("use_model_summary", True))
         try:
             admin["off_seconds"] = max(10, min(86400, int(admin.get("off_seconds", 3600))))
         except (TypeError, ValueError):

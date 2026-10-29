@@ -24,7 +24,7 @@ class TargetDialog(BaseDialog):
         self.page = page
         self.target = target
         super().__init__(parent, "编辑监听对象", "只有白名单中的会话会被回复", width=560,
-                         height=550, icon=page.icon)
+                         height=620, icon=page.icon)
         body = tk.Frame(self.body, bg=C["card"])
         body.pack(fill="both", expand=True, padx=px(24), pady=px(20))
         self.name = LabeledEntry(body, "微信显示名称", target.get("name", ""),
