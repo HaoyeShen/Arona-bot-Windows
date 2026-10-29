@@ -326,10 +326,11 @@ class PersonasPage(BasePage):
         self.app.toast(f"已在调试台切换到「{persona.get('name')}」。", "info")
 
     def reset(self, persona: dict) -> None:
-        if not confirm(self.winfo_toplevel(), "重置阿洛娜",
-                       "将阿洛娜的人格恢复为内置默认设定？你后来做的编辑会被覆盖。",
+        name = persona.get("name", "角色")
+        if not confirm(self.winfo_toplevel(), f"重置{name}",
+                       f"将「{name}」恢复为内置默认设定？你后来做的编辑会被覆盖。",
                        ok_text="重置", danger=True, icon=self.icon):
             return
-        self.personas.reset_arona()
+        self.personas.reset_builtin(persona.get("id", "arona"))
         self.refresh()
-        self.app.toast("阿洛娜已恢复为初始设定。", "success")
+        self.app.toast(f"「{name}」已恢复为初始设定。", "success")

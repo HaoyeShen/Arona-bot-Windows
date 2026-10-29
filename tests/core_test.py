@@ -22,6 +22,7 @@ from app.prompting import (
     build_context_messages,
     build_system_prompt,
     fix_self_reference,
+    at_mentioned,
     parse_reply,
     resolve_sticker,
     select_fallback_sticker,
@@ -91,6 +92,14 @@ def test_prompt_and_stickers() -> None:
                                          target_type="friend", recipient_name="赵军情")
     assert_true("赵军情老师" in private_system,
                 "private address rule")
+    assert_true(at_mentioned("@我的昵称 在吗", "我的昵称", ["阿洛娜"]),
+                "self nickname mention counts when enabled")
+    assert_true(not at_mentioned("@我的昵称 在吗", "", ["阿洛娜"]),
+                "self nickname mention is ignored when disabled")
+    assert_true(at_mentioned("@阿洛娜 在吗", "", ["阿洛娜"]),
+                "persona name mention still counts")
+    assert_true(PersonaStore().get("plana").get("name") == "普拉娜",
+                "Plana persona exists")
     first_name = stickers[0]["name"]
     text, chosen = parse_reply(f"老师辛苦啦，早点休息。\n[sticker:{first_name}]", stickers)
     assert_true(chosen and chosen["name"] == first_name, "parse sticker tag")

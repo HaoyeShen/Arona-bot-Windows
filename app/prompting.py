@@ -25,17 +25,22 @@ SERIOUS_WORDS = (
 )
 GROUP_PREFIX = re.compile(r"^\[[^\]]{1,60}\]\s*")
 
-SELF_NAME_RULE = (
-    "【自称与称呼规则（最高优先级）】\n"
-    "你是阿洛娜。无论私聊还是群聊，除你之外的人都要用「对方微信昵称+老师」称呼，"
-    "例如「赵军情老师」；不要只叫「老师」，也不要直呼对方的裸昵称。\n"
-    "你回复时自称只能用「阿洛娜」或「我」；带「老师」的称呼永远只指对方，"
-    "绝对不能用来指你自己。\n"
-    "说自己的感受/动作时：正确是「赵军情老师，阿洛娜好开心」；"
-    "错误是「赵军情老师好开心」「老师会一直陪着老师」「告诉老师吧」（当意思是我时）。\n"
-    "历史里旧的回复如果也这样自称，不要模仿。\n"
-    "输出前自检：句子的主语如果是你自己，必须写成「阿洛娜」或「我」。"
-)
+def self_name_rule(name: str = "阿洛娜") -> str:
+    name = str(name or "阿洛娜").strip() or "阿洛娜"
+    return (
+        "【自称与称呼规则（最高优先级）】\n"
+        f"你是{name}。无论私聊还是群聊，除你之外的人都要用「对方微信昵称+老师」称呼，"
+        "例如「赵军情老师」；不要只叫「老师」，也不要直呼对方的裸昵称。\n"
+        f"你回复时自称只能用「{name}」或「我」；带「老师」的称呼永远只指对方，"
+        "绝对不能用来指你自己。\n"
+        f"说自己的感受/动作时：正确是「赵军情老师，{name}好开心」；"
+        "错误是「赵军情老师好开心」「老师会一直陪着老师」「告诉老师吧」（当意思是我时）。\n"
+        "历史里旧的回复如果也这样自称，不要模仿。\n"
+        f"输出前自检：句子的主语如果是你自己，必须写成「{name}」或「我」。"
+    )
+
+
+SELF_NAME_RULE = self_name_rule("阿洛娜")
 
 
 def address_name(name: object) -> str:
@@ -179,7 +184,7 @@ def build_system_prompt(persona: dict, stickers: list[dict], *,
     sections = [
         (
             f"你是「{persona.get('name', '阿洛娜')}」，正在微信里聊天。"
-            f"你是阿洛娜，自称只能用「阿洛娜」或「我」，绝不能自称「老师」。"
+            f"你是{persona.get('name', '阿洛娜')}，自称只能用「{persona.get('name', '阿洛娜')}」或「我」，绝不能自称「老师」。"
             + party_rule
             + f"当前对话：{target_name or '未知'}（{chat_kind}）。现在是 {now:%Y-%m-%d %H:%M}，星期{weekday}。"
         ),
@@ -241,7 +246,7 @@ def build_system_prompt(persona: dict, stickers: list[dict], *,
         sections.append(f"【你的微信昵称】{bot_name}（群聊中被 @ 时使用）")
     if training_block:
         sections.append(training_block)
-    sections.append(SELF_NAME_RULE)
+    sections.append(self_name_rule(persona.get("name", "阿洛娜")))
     return "\n\n".join(section for section in sections if section.strip())
 
 
@@ -272,7 +277,7 @@ def build_compact_system_prompt(persona: dict, stickers: list[dict], *,
                       "不要只叫老师。")
     lines = [
         f"你是「{name}」" + (f"，{title}" if title else "") + "。",
-        "你是阿洛娜，自称只能用「阿洛娜」或「我」，绝对不要用「老师」自称。",
+        f"你是{name}，自称只能用「{name}」或「我」，绝对不要用「老师」自称。",
         party_line,
         "历史里的 [昵称老师] 是对方（私聊对象或群成员），[阿洛娜] 是你；不要把方括号标签写进回复。",
         desc,
@@ -307,7 +312,7 @@ def build_compact_system_prompt(persona: dict, stickers: list[dict], *,
         )
     if training_block:
         lines.append(training_block)
-    lines.append(SELF_NAME_RULE)
+    lines.append(self_name_rule(persona.get("name", "阿洛娜")))
     return "\n".join(line for line in lines if line)
 
 

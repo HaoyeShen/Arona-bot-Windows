@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .defaults import ARONA_PERSONA, DEFAULT_CONFIG, default_stickers
+from .defaults import ARONA_PERSONA, PLANA_PERSONA, DEFAULT_CONFIG, default_stickers
 from .paths import CONFIG_FILE, PERSONAS_FILE, STICKERS_FILE, STICKER_DIR, ROOT, ensure_dirs
 
 log = logging.getLogger(__name__)
@@ -95,6 +95,12 @@ class ConfigStore:
                 data[section] = copy.deepcopy(DEFAULT_CONFIG[section])
         admin = data.setdefault("admin", {})
         admin["password"] = str(admin.get("password") or "arona-admin")
+        allowed = admin.get("allowed")
+        if isinstance(allowed, str):
+            allowed = [line.strip() for line in allowed.splitlines() if line.strip()]
+        if not isinstance(allowed, list):
+            allowed = ["__self__"]
+        admin["allowed"] = [str(item).strip() for item in allowed if str(item).strip()] or ["__self__"]
         try:
             admin["off_seconds"] = max(10, min(86400, int(admin.get("off_seconds", 3600))))
         except (TypeError, ValueError):
@@ -108,6 +114,19 @@ class ConfigStore:
         except (TypeError, ValueError):
             group_probability = 0.3
         bot["group_reply_probability"] = max(0.0, min(1.0, group_probability))
+        bot["group_at_include_self_name"] = bool(bot.get("group_at_include_self_name", True))
+        bot["context_summary_enabled"] = bool(bot.get("context_summary_enabled", True))
+        for key_name, default_value, low, high in (
+            ("context_summary_threshold_chars", 6000, 2000, 50000),
+            ("context_summary_keep_messages", 12, 4, 60),
+            ("context_summary_interval_seconds", 300, 30, 86400),
+            ("context_summary_max_chars", 500, 100, 2000),
+        ):
+            try:
+                value = int(bot.get(key_name, default_value))
+            except (TypeError, ValueError):
+                value = default_value
+            bot[key_name] = max(low, min(high, value))
         try:
             bot["context_limit"] = max(20, min(100, int(bot.get("context_limit", 30))))
         except (TypeError, ValueError):
@@ -154,6 +173,13 @@ class ConfigStore:
                 target_probability = float(t.get("reply_probability", 1.0))
             except (TypeError, ValueError):
                 target_probability = 1.0
+            try:
+                target_group_probability = float(t.get(
+                    "group_reply_probability",
+                    bot.get("group_reply_probability", 0.3),
+                ))
+            except (TypeError, ValueError):
+                target_group_probability = float(bot.get("group_reply_probability", 0.3))
             clean_targets.append({
                 "id": t.get("id") or uuid.uuid4().hex[:12],
                 "name": name,
@@ -163,6 +189,7 @@ class ConfigStore:
                 "require_at": bool(t.get("require_at", True)),
                 "context_limit": max(20, min(100, target_context)),
                 "reply_probability": max(0.0, min(1.0, target_probability)),
+                "group_reply_probability": max(0.0, min(1.0, target_group_probability)),
                 "note": str(t.get("note", "")),
                 "added_at": t.get("added_at") or _now(),
             })
@@ -287,7 +314,8 @@ class ConfigStore:
             }
             self.data["targets"].append(target)
             self.save()
-            return target
+            # save() normalises targets into fresh dicts; return the live one.
+            return self.target_by_name(name) or target
 
     def update_target(self, target_id: str, patch: dict) -> None:
         for target in self.data.get("targets", []):
@@ -328,7 +356,7 @@ class PersonaStore:
     def load(self) -> None:
         with self._lock:
             if not self.path.exists():
-                self.items = copy.deepcopy([ARONA_PERSONA])
+                self.items = copy.deepcopy([ARONA_PERSONA, PLANA_PERSONA])
                 self.save()
                 return
             try:
@@ -356,11 +384,11 @@ class PersonaStore:
                     item.setdefault("created_at", _now())
                     item.setdefault("updated_at", item["created_at"])
                     cleaned.append(item)
-                self.items = cleaned or copy.deepcopy([ARONA_PERSONA])
+                self.items = cleaned or copy.deepcopy([ARONA_PERSONA, PLANA_PERSONA])
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 log.error("读取人格配置失败：%s", exc)
                 _backup_corrupt(self.path)
-                self.items = copy.deepcopy([ARONA_PERSONA])
+                self.items = copy.deepcopy([ARONA_PERSONA, PLANA_PERSONA])
             self.save()
 
     def save(self) -> None:
@@ -404,6 +432,10 @@ class PersonaStore:
             self.items = keep
             self.save()
             return True
+
+    def reset_builtin(self, persona_id: str) -> dict:
+        source = PLANA_PERSONA if persona_id == "plana" else ARONA_PERSONA
+        return self.upsert(copy.deepcopy(source))
 
     def reset_arona(self) -> dict:
         return self.upsert(copy.deepcopy(ARONA_PERSONA))

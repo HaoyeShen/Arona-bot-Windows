@@ -66,6 +66,13 @@ class MemoryStore:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS chat_summaries (
+                chat TEXT PRIMARY KEY,
+                summary TEXT NOT NULL DEFAULT '',
+                covered_id INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL,
+                updated_iso TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS token_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat TEXT NOT NULL DEFAULT '',
@@ -234,6 +241,53 @@ class MemoryStore:
             ).fetchall()
         return [self._row(row) for row in reversed(rows)]
 
+    def recent_after(self, chat: str, after_id: int = 0,
+                     limit: int = 30) -> list[dict]:
+        limit = max(1, min(200, int(limit)))
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM messages
+                   WHERE chat=? AND role IN ('user','assistant') AND id>?
+                   ORDER BY id DESC LIMIT ?""",
+                (chat, max(0, int(after_id or 0)), limit),
+            ).fetchall()
+        return [self._row(row) for row in reversed(rows)]
+
+    def context_chars(self, chat: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(LENGTH(content)),0) AS n FROM messages "
+                "WHERE chat=? AND role IN ('user','assistant')", (chat,)
+            ).fetchone()
+        return int(row["n"] or 0)
+
+    def get_summary(self, chat: str) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT summary, covered_id, updated_at, updated_iso FROM chat_summaries WHERE chat=?",
+                (chat,),
+            ).fetchone()
+        return dict(row) if row else {"summary": "", "covered_id": 0,
+                                      "updated_at": 0.0, "updated_iso": ""}
+
+    def set_summary(self, chat: str, summary: str, covered_id: int) -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO chat_summaries(chat,summary,covered_id,updated_at,updated_iso)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(chat) DO UPDATE SET
+                     summary=excluded.summary, covered_id=excluded.covered_id,
+                     updated_at=excluded.updated_at, updated_iso=excluded.updated_iso""",
+                (chat, str(summary or ""), max(0, int(covered_id or 0)), now, self._iso(now)),
+            )
+            self._conn.commit()
+
+    def clear_summary(self, chat: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM chat_summaries WHERE chat=?", (chat,))
+            self._conn.commit()
+
     def recent_messages(self, limit: int = 40) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -372,18 +426,25 @@ class MemoryStore:
                 "SELECT * FROM messages WHERE chat=? ORDER BY id", (chat,))]
             seen = [dict(row) for row in self._conn.execute(
                 "SELECT * FROM seen WHERE chat=?", (chat,))]
-        return {"messages": messages, "seen": seen}
+            summary = self._conn.execute(
+                "SELECT summary, covered_id, updated_at, updated_iso FROM chat_summaries WHERE chat=?",
+                (chat,),
+            ).fetchone()
+        return {"messages": messages, "seen": seen,
+                "summary": dict(summary) if summary else None}
 
     def restore_chat(self, chat: str, snapshot: dict) -> None:
         """Restore a snapshot taken before an admin session."""
         messages = snapshot.get("messages", []) if isinstance(snapshot, dict) else []
         seen = snapshot.get("seen", []) if isinstance(snapshot, dict) else []
+        summary = snapshot.get("summary") if isinstance(snapshot, dict) else None
         columns = ("id", "chat", "role", "sender", "content", "msg_type",
                    "sticker_name", "external_id", "profile_name", "latency_ms",
                    "meta", "created_at", "created_iso")
         with self._lock:
             self._conn.execute("DELETE FROM messages WHERE chat=?", (chat,))
             self._conn.execute("DELETE FROM seen WHERE chat=?", (chat,))
+            self._conn.execute("DELETE FROM chat_summaries WHERE chat=?", (chat,))
             for row in messages:
                 values = tuple(row.get(column) for column in columns)
                 placeholders = ",".join("?" for _ in columns)
@@ -396,6 +457,14 @@ class MemoryStore:
                     "INSERT OR REPLACE INTO seen(fingerprint,chat,ts) VALUES(?,?,?)",
                     (row.get("fingerprint"), chat, row.get("ts", time.time())),
                 )
+            if isinstance(summary, dict) and summary.get("summary"):
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO chat_summaries(chat,summary,covered_id,updated_at,updated_iso) "
+                    "VALUES(?,?,?,?,?)",
+                    (chat, summary.get("summary", ""), int(summary.get("covered_id", 0) or 0),
+                     float(summary.get("updated_at", time.time()) or time.time()),
+                     str(summary.get("updated_iso", self._iso()))),
+                )
             self._conn.commit()
 
     def clear(self, chat: str | None = None) -> int:
@@ -403,9 +472,11 @@ class MemoryStore:
             if chat:
                 cur = self._conn.execute("DELETE FROM messages WHERE chat=?", (chat,))
                 self._conn.execute("DELETE FROM seen WHERE chat=?", (chat,))
+                self._conn.execute("DELETE FROM chat_summaries WHERE chat=?", (chat,))
             else:
                 cur = self._conn.execute("DELETE FROM messages")
                 self._conn.execute("DELETE FROM seen")
+                self._conn.execute("DELETE FROM chat_summaries")
             self._conn.commit()
             return cur.rowcount
 

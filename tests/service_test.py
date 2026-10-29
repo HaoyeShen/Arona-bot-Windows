@@ -80,7 +80,8 @@ def main() -> int:
                            "group_probability_reply": True,
                            "group_reply_probability": 0.0})
         config.add_target("测试会话", "friend", "arona")
-        config.add_target("测试群", "group", "arona", require_at=True)
+        group_target = config.add_target("测试群", "group", "arona", require_at=True)
+        group_target["group_reply_probability"] = 0.0
         memory = MemoryStore(Path(tmp) / "test.db")
         # 25 historical turns prove the context window is populated.
         for i in range(25):
@@ -166,6 +167,7 @@ def main() -> int:
 
             # With probability at 100%, a non-@ group message replies too.
             config.bot["group_reply_probability"] = 1.0
+            group_target["group_reply_probability"] = 1.0
             adapter.on_message(IncomingMessage(
                 chat="测试群", sender="群友", content="随便聊聊",
                 msg_type="text", external_id="wx:test-group-3", attr="friend",
@@ -178,6 +180,7 @@ def main() -> int:
             # Turning off @-always makes an @ follow the probability (0%).
             config.bot["group_at_always_reply"] = False
             config.bot["group_reply_probability"] = 0.0
+            group_target["group_reply_probability"] = 0.0
             adapter.on_message(IncomingMessage(
                 chat="测试群", sender="群友", content="@阿洛娜 在吗",
                 msg_type="text", external_id="wx:test-group-4", attr="friend",

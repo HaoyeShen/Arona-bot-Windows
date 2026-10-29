@@ -65,8 +65,15 @@ class TargetDialog(BaseDialog):
         prob_frame.pack(fill="x", pady=(0, px(10)))
         self.probability = LabeledEntry(prob_frame, "私聊回复概率（0–1）",
                                         str(target.get("reply_probability", 1.0)),
-                                        hint="群聊概率在设置页统一设置", width=12)
-        self.probability.pack(side="left", fill="x", expand=True)
+                                        hint="仅好友生效", width=10)
+        self.probability.pack(side="left", fill="x", expand=True, padx=(0, px(6)))
+        self.group_probability = LabeledEntry(
+            prob_frame, "群聊未 @ 概率（0–1）",
+            str(target.get("group_reply_probability",
+                           page.config.bot.get("group_reply_probability", 0.3))),
+            hint="仅群聊生效", width=10,
+        )
+        self.group_probability.pack(side="left", fill="x", expand=True)
         self.note = LabeledEntry(body, "备注（可选）", target.get("note", ""), width=30)
         self.note.pack(fill="x", pady=(px(4), 0))
         self.error = tk.Label(body, text="", bg=C["card"], fg=C["red"], font=font(8),
@@ -83,6 +90,9 @@ class TargetDialog(BaseDialog):
         try:
             context = max(20, min(100, int(self.context.get() or 30)))
             probability = max(0.0, min(1.0, float(self.probability.get() or 1.0)))
+            group_probability = max(0.0, min(1.0, float(
+                self.group_probability.get() or self.page.config.bot.get("group_reply_probability", 0.3)
+            )))
         except ValueError:
             self.error.configure(text="上下文条数和回复概率必须是数字。")
             return
@@ -96,6 +106,7 @@ class TargetDialog(BaseDialog):
                 "persona_id": persona_id,
                 "context_limit": context,
                 "reply_probability": probability,
+                "group_reply_probability": group_probability,
                 "require_at": bool(self.target.get("require_at", True)),
                 "note": self.note.get(),
             })
@@ -137,7 +148,11 @@ class TargetRow(tk.Frame):
                      font=font(7), padx=px(5)).pack(side="left", padx=(px(5), 0))
         persona = page.personas.get(target.get("persona_id"))
         context_count = page.memory.context_count(target.get("name", ""))
-        note = f"人格：{persona.get('name', '阿洛娜')}  ·  已存 {context_count} 条上下文  ·  上下文窗口 {target.get('context_limit', 30)}"
+        probability_note = ""
+        if target.get("type") == "group":
+            probability_note = f"  ·  未@概率 {round(float(target.get('group_reply_probability', 0.3)) * 100)}%"
+        note = (f"人格：{persona.get('name', '阿洛娜')}  ·  已存 {context_count} 条上下文"
+                f"  ·  上下文窗口 {target.get('context_limit', 30)}{probability_note}")
         if target.get("note"):
             note += "  ·  " + truncate(target.get("note"), 26)
         tk.Label(mid, text=note, bg=bg, fg=C["muted"], font=font(8), anchor="w").pack(fill="x")
@@ -145,6 +160,11 @@ class TargetRow(tk.Frame):
         actions.pack(side="right")
         RoundedButton(actions, text="同步上下文", command=lambda: page.sync(target),
                       style="ghost", width=82, height=28, bg=bg, font_size=7).pack(side="left")
+        if target.get("type") == "group":
+            RoundedButton(actions, text="清空上下文", command=lambda: page.clear_context(target),
+                          style="ghost", width=82, height=28, bg=bg, font_size=7).pack(
+                side="left", padx=(px(3), 0)
+            )
         RoundedButton(actions, text="编辑", command=lambda: page.edit(target),
                       style="ghost", width=48, height=28, bg=bg, font_size=7).pack(side="left")
         RoundedButton(actions, text="删除", command=lambda: page.delete(target),
@@ -321,6 +341,16 @@ class TargetsPage(BasePage):
                 self.after(0, lambda message=message: self.app.toast("同步失败：" + message, "error"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def clear_context(self, target: dict) -> None:
+        if not confirm(self.winfo_toplevel(), "清空群聊上下文",
+                       f"确定清空「{target.get('name')}」的全部上下文记忆吗？\n"
+                       "只影响这个群，不会删除其他会话。",
+                       ok_text="清空", danger=True, icon=self.app.icon):
+            return
+        count = self.memory.clear(target.get("name", ""))
+        self.app.toast(f"已清空「{target.get('name')}」的 {count} 条上下文。", "success")
+        self.refresh()
 
     def _synced(self, target: dict, count: int) -> None:
         self.app.toast(f"已同步「{target['name']}」的 {count} 条上下文。", "success")

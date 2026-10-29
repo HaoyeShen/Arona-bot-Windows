@@ -107,6 +107,12 @@ class SettingsPage(BasePage):
             self.config.bot.get("group_at_always_reply", True),
         )
         self.group_at_always.pack(fill="x")
+        self.group_at_self_name = ToggleRow(
+            group_frame, "群聊 @ 我的微信昵称也触发",
+            "关闭后只认 @阿洛娜 / @ARONA，不把登录账号昵称算作 @。",
+            self.config.bot.get("group_at_include_self_name", True),
+        )
+        self.group_at_self_name.pack(fill="x")
         self.group_probability = ToggleRow(
             group_frame, "群聊未 @ 概率回复",
             "没被 @ 时按下面的概率决定是否回复；关闭后未 @ 一律不回复。",
@@ -158,6 +164,31 @@ class SettingsPage(BasePage):
                                           str(self.config.bot.get("sticker_probability", 0.35)),
                                           hint="0–1 · 模型未主动选择时", width=12)
         self.sticker_prob.pack(fill="x", pady=(px(8), 0))
+        summary_row = tk.Frame(context.body, bg=C["card"])
+        summary_row.pack(fill="x", pady=(px(8), 0))
+        for i in range(3):
+            summary_row.grid_columnconfigure(i, weight=1)
+        self.summary_threshold = LabeledEntry(
+            summary_row, "摘要触发字数",
+            str(self.config.bot.get("context_summary_threshold_chars", 6000)),
+            hint="超过后压缩", width=8,
+        )
+        self.summary_threshold.grid(row=0, column=0, sticky="ew", padx=(0, px(5)))
+        self.summary_keep = LabeledEntry(
+            summary_row, "摘要保留最近条数",
+            str(self.config.bot.get("context_summary_keep_messages", 12)),
+            hint="条", width=8,
+        )
+        self.summary_keep.grid(row=0, column=1, sticky="ew", padx=px(5))
+        self.summary_interval = LabeledEntry(
+            summary_row, "摘要间隔秒",
+            str(self.config.bot.get("context_summary_interval_seconds", 300)),
+            hint="秒", width=8,
+        )
+        self.summary_interval.grid(row=0, column=2, sticky="ew", padx=(px(5), 0))
+        tk.Label(context.body, text="上下文超过触发字数后，会定时把较早消息压缩成摘要；不会把全部旧消息直接发给模型。",
+                 bg=C["card"], fg=C["muted"], font=font(7), anchor="w", justify="left",
+                 wraplength=px(420)).pack(fill="x", pady=(px(4), 0))
         tk.Label(context.body, text="修改上下文条数不会删除已有记录，只影响每次发送给模型的历史长度。",
                  bg=C["card"], fg=C["muted"], font=font(7), anchor="w").pack(fill="x", pady=(px(6), 0))
 
@@ -202,6 +233,20 @@ class SettingsPage(BasePage):
             hint="发送 /admin 后输入", width=24,
         )
         self.admin_password.pack(fill="x", pady=(0, px(6)))
+        tk.Label(admin_card.body, text="管理员名单（每行一个；__self__ 表示机器人账号本人）",
+                 bg=C["card"], fg=C["text_soft"], font=font(8, "bold"), anchor="w").pack(
+            fill="x", pady=(px(4), px(3))
+        )
+        self.admin_allowed = tk.Text(
+            admin_card.body, height=3, bg=C["card_soft"], fg=C["text"],
+            insertbackground=C["text"], relief="flat", font=font(8),
+            highlightthickness=1, highlightbackground=C["line"],
+            highlightcolor=C["cyan"], padx=px(6), pady=px(4),
+        )
+        self.admin_allowed.pack(fill="x", pady=(0, px(6)))
+        self.admin_allowed.insert("1.0", "\n".join(
+            str(x) for x in self.config.data.get("admin", {}).get("allowed", ["__self__"])
+        ))
         tk.Label(
             admin_card.body,
             text="命令：/admin 验证 · /reset 清空当前上下文 · /test 调试信息 · "
@@ -267,6 +312,9 @@ class SettingsPage(BasePage):
             max_chars = max(8, min(1800, int(self.max_chars.get() or 23)))
             sentence_chars = max(8, min(80, int(self.sentence_chars.get() or 23)))
             group_probability = max(0, min(100, int(float(self.group_probability_value.get() or 30))))
+            summary_threshold = max(2000, min(50000, int(self.summary_threshold.get() or 6000)))
+            summary_keep = max(4, min(60, int(self.summary_keep.get() or 12)))
+            summary_interval = max(30, min(86400, int(self.summary_interval.get() or 300)))
             max_stickers = max(0, min(3, int(self.max_stickers.get())))
             delay_min = max(0.0, min(30.0, float(self.delay_min.get())))
             delay_max = max(delay_min, min(30.0, float(self.delay_max.get())))
@@ -294,6 +342,11 @@ class SettingsPage(BasePage):
             "max_reply_chars": max_chars,
             "max_sentence_chars": sentence_chars,
             "group_at_always_reply": self.group_at_always.get(),
+            "group_at_include_self_name": self.group_at_self_name.get(),
+            "context_summary_enabled": True,
+            "context_summary_threshold_chars": summary_threshold,
+            "context_summary_keep_messages": summary_keep,
+            "context_summary_interval_seconds": summary_interval,
             "group_probability_reply": self.group_probability.get(),
             "group_reply_probability": group_probability / 100.0,
             "max_stickers_per_reply": max_stickers,
@@ -315,6 +368,9 @@ class SettingsPage(BasePage):
             self.app.toast("管理员密码不能为空。", "error")
             return
         self.config.data.setdefault("admin", {})["password"] = admin_password
+        allowed = [line.strip() for line in self.admin_allowed.get("1.0", "end").splitlines()
+                   if line.strip()]
+        self.config.data["admin"]["allowed"] = allowed or ["__self__"]
         self.config.save()
         self.service.reload_config()
         self.status.configure(text="已保存 · " + datetime.now().strftime("%H:%M:%S"),
