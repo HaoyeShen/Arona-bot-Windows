@@ -76,7 +76,12 @@ class BotService:
         self._image_cache: dict[str, str] = {}
         self._summary_lock = threading.Lock()
         self._summary_last: dict[str, float] = {}
-        self.news = NewsService(config, personas, usage_callback=self._record_usage)
+        self.news = NewsService(
+            config, personas,
+            usage_callback=lambda result, _chat="": self._record_usage(
+                result, "基沃托斯新闻", "news"
+            ),
+        )
         self._admin_lock = threading.RLock()
         self._admin_sessions: dict[tuple[str, str], dict] = {}
         self._admin_challenges: dict[tuple[str, str], float] = {}

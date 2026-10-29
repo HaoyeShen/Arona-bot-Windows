@@ -372,6 +372,47 @@ class NewsService:
             ))
         return found
 
+    def _official_cn(self, timeout: float, per_region: int) -> list[NewsItem]:
+        """Read the official CN "快讯" list.
+
+        The homepage loads it through /api/news/list.  We read the linked
+        articles' text (not videos) and keep the official CN server scope.
+        """
+        url = ("https://bluearchive-cn.com/api/news/list?"
+               "pageIndex=1&pageNum=12&type=")
+        try:
+            payload = _http_json(url, timeout=timeout)
+        except Exception as exc:
+            log.warning("国服官网快讯读取失败：%s", exc)
+            return []
+        if int(payload.get("code", -1)) != 0:
+            return []
+        rows = (payload.get("data") or {}).get("rows") or []
+        now = time.time()
+        items: list[NewsItem] = []
+        for row in rows:
+            title = _clean(str(row.get("title") or ""))
+            if not title:
+                continue
+            published = float(row.get("publishTime") or 0) / 1000.0
+            if published and published > 0 and now - published > 21 * 86400:
+                continue
+            content = _strip_html(str(row.get("content") or ""))
+            content = re.sub(r"\s+", " ", content).strip()
+            item_id = row.get("id")
+            items.append(NewsItem(
+                region="国服",
+                title=title[:110],
+                url=(f"https://bluearchive-cn.com/news/{item_id}" if item_id
+                     else "https://bluearchive-cn.com/"),
+                source="国服官网",
+                snippet=content[:500],
+                uncertain=False,
+            ))
+            if len(items) >= per_region:
+                break
+        return items
+
     def _bilibili(self, query: str, region: str, timeout: float,
                   per_region: int) -> list[NewsItem]:
         """Search Bilibili articles.  It is a useful public source for the
@@ -437,6 +478,14 @@ class NewsService:
         result: dict[str, list[NewsItem]] = {region[0]: [] for region in self.REGIONS}
         seen: set[str] = set()
         for region, first_query, second_query in self.REGIONS:
+            if region == "国服":
+                for item in self._official_cn(timeout, per_region):
+                    key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
+                    if key and key not in seen:
+                        seen.add(key)
+                        result[region].append(item)
+                if result[region]:
+                    continue
             for query in (first_query, second_query):
                 for item in self._bilibili(query, region, timeout, per_region):
                     key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
