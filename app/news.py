@@ -84,6 +84,53 @@ def _past_tense_issue(text: str, now: datetime) -> bool:
     return False
 
 
+def _sanitize_past_tense(text: str, now: datetime) -> str:
+    """Remove predictive wording from sentences whose date is already past.
+
+    The model is asked to verify dates, but a second deterministic pass keeps
+    a single hallucinated "预计/将/会" from reaching the group.
+    """
+    date_re = re.compile(r"(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日")
+    future = re.compile(r"预计|即将|将要|将会|将于|将在|会在|会于|将|会")
+    out = []
+    for sentence in re.split(r"(?<=[。！？!?\n])", text or ""):
+        has_past = False
+        if sentence.strip():
+            for match in date_re.finditer(sentence):
+                year = int(match.group(1) or now.year)
+                try:
+                    event_date = date(year, int(match.group(2)), int(match.group(3)))
+                except ValueError:
+                    continue
+                if event_date < now.date():
+                    has_past = True
+                    break
+        if has_past:
+            sentence = sentence.replace("预计持续", "持续")
+            sentence = sentence.replace("预计于", "已于")
+            sentence = sentence.replace("预计在", "已在")
+            sentence = sentence.replace("预计", "")
+            sentence = sentence.replace("将会", "已经")
+            sentence = sentence.replace("将要", "已经")
+            sentence = sentence.replace("即将", "已经")
+            sentence = sentence.replace("将于", "已于")
+            sentence = sentence.replace("将在", "已在")
+            sentence = sentence.replace("会在", "已在")
+            sentence = sentence.replace("会于", "已于")
+            # Only replace future auxiliaries when they introduce a verb; this
+            # leaves words such as 机会/会员 untouched.
+            sentence = re.sub(
+                r"(?<!机)会(?=(?:于|在|从|开始|开启|上线|结束|持续|进行|登场|举办|发布|更新))",
+                "已", sentence,
+            )
+            sentence = re.sub(
+                r"将(?=(?:于|在|从|开始|开启|上线|结束|持续|进行|登场|举办|发布|更新))",
+                "已", sentence,
+            )
+        out.append(sentence)
+    return "".join(out)
+
+
 class _BingParser(HTMLParser):
     """Small, dependency-free parser for Bing's organic result list."""
 
@@ -527,11 +574,12 @@ class NewsService:
         settings = self.settings
         timeout = max(5.0, min(20.0, float(settings.get("timeout", 10) or 10)))
         per_region = max(1, min(3, int(settings.get("max_items", 2) or 2)))
+        fetch_limit = max(per_region, min(6, per_region * 3))
         result: dict[str, list[NewsItem]] = {region[0]: [] for region in self.REGIONS}
         seen: set[str] = set()
         for region, first_query, second_query in self.REGIONS:
             if region == "国服":
-                for item in self._official_cn(timeout, per_region):
+                for item in self._official_cn(timeout, fetch_limit):
                     key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
                     if key and key not in seen:
                         seen.add(key)
@@ -539,15 +587,15 @@ class NewsService:
                 if result[region]:
                     continue
             for query in (first_query, second_query):
-                for item in self._bilibili(query, region, timeout, per_region):
+                for item in self._bilibili(query, region, timeout, fetch_limit):
                     key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
                     if not key or key in seen:
                         continue
                     seen.add(key)
                     result[region].append(item)
-                    if len(result[region]) >= per_region:
+                    if len(result[region]) >= fetch_limit:
                         break
-                if len(result[region]) >= per_region:
+                if len(result[region]) >= fetch_limit:
                     break
             # Fallback to Bing if Bilibili has no usable result; Bing may be
             # empty for some locales but this keeps the collector replaceable.
@@ -737,6 +785,9 @@ class NewsService:
                     result = corrected
             except Exception as exc:
                 log.warning("新闻时间语气修正失败：%s", exc)
+        text = _sanitize_past_tense(text, now)
+        if _past_tense_issue(text, now):
+            return None, result
         if len(text) < 80:
             return None, result
         if not all(mark in text for mark in ("国服", "日服", "国际服")):
@@ -755,7 +806,67 @@ class NewsService:
                     self.usage_callback(result, "news")
             except Exception as exc:
                 log.warning("新闻模型总结失败，改用模板：%s", exc)
-        return self._fallback_message(grouped), None
+        fallback = self._fallback_message(grouped)
+        return _sanitize_past_tense(fallback, datetime.now()), None
+
+    @staticmethod
+    def _item_key(item: NewsItem) -> str:
+        return item.region + ":" + re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
+
+    def _filter_seen(self, grouped: dict[str, list[NewsItem]],
+                     per_region: int) -> dict[str, list[NewsItem]]:
+        """Prefer items not sent in the last week, while keeping one CN official item."""
+        state = self._load_state()
+        raw_seen = state.get("seen_titles") or {}
+        cutoff = date.today().toordinal() - 7
+        seen = {}
+        if isinstance(raw_seen, dict):
+            for key, value in raw_seen.items():
+                try:
+                    if date.fromisoformat(str(value)).toordinal() >= cutoff:
+                        seen[key] = str(value)
+                except ValueError:
+                    continue
+        selected: dict[str, list[NewsItem]] = {}
+        for region, items in grouped.items():
+            fresh = [item for item in items if self._item_key(item) not in seen]
+            picked = fresh[:per_region]
+            if region == "国服":
+                official = [item for item in items if item.source == "国服官网"]
+                chosen_official = [item for item in picked if item.source == "国服官网"]
+                if official and not chosen_official:
+                    # The official CN 快讯 must appear every day, even when its
+                    # newest item was already used yesterday.
+                    picked = official[:1] + [item for item in picked
+                                             if item is not official[0]][:per_region - 1]
+                if not picked:
+                    picked = official[:1] or items[:per_region]
+            if not picked:
+                # No fresh item today: avoid an empty section by repeating the
+                # most relevant one, but never invent a story.
+                picked = items[:per_region]
+            selected[region] = picked
+        return selected
+
+    def _mark_seen(self, grouped: dict[str, list[NewsItem]]) -> None:
+        state = self._load_state()
+        seen = state.get("seen_titles") or {}
+        if not isinstance(seen, dict):
+            seen = {}
+        today = date.today().isoformat()
+        for items in grouped.values():
+            for item in items:
+                seen[self._item_key(item)] = today
+        # Keep the file small; old keys are irrelevant after the seven-day filter.
+        cutoff = date.today().toordinal() - 14
+        pruned = {}
+        for key, value in seen.items():
+            try:
+                if date.fromisoformat(str(value)).toordinal() >= cutoff:
+                    pruned[key] = str(value)
+            except ValueError:
+                continue
+        self._save_state({"seen_titles": pruned})
 
     # ------------------------------------------------------------------- send
     def run(self, adapter, now: datetime | None = None, force: bool = False) -> dict:
@@ -776,6 +887,9 @@ class NewsService:
                     "last_attempt_date": current.date().isoformat(),
                 })
             grouped = self.fetch()
+            grouped = self._filter_seen(
+                grouped, max(1, min(3, int(self.settings.get("max_items", 2) or 2)))
+            )
             self._enrich_images(grouped)
             if not any(grouped.values()):
                 self._save_state({"last_error": "没有检索到可靠新闻"})
@@ -806,6 +920,8 @@ class NewsService:
             if not force:
                 patch["last_sent_date"] = current.date().isoformat()
             self._save_state(patch)
+            if not force:
+                self._mark_seen(grouped)
             log.info("基沃托斯新闻已发送 · %s · %d 字", target, len(message))
             return {"sent": True, "target": target, "message": message,
                     "usage": usage_result}

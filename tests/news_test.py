@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config_store import ConfigStore, PersonaStore
-from app.news import NewsItem, NewsService, _BingParser
+from app.news import (NewsItem, NewsService, _BingParser, _past_tense_issue,
+                      _sanitize_past_tense)
 from tests.service_test import FakeAdapter
 
 
@@ -23,6 +24,13 @@ def main() -> int:
     # Bing result parser remains a fallback when Bilibili search is unavailable.
     sample = """<ol><li class="b_algo"><h2><a href="https://example.com/a">Blue Archive update</a></h2>
     <p>A new event is coming.</p><cite>example.com</cite></li></ol>"""
+    now = datetime(2026, 10, 30, 6, 50)
+    assert _past_tense_issue("日服会在10月28日维护后开启。", now)
+    assert not _past_tense_issue("日服已于10月28日维护后开启。", now)
+    assert not _past_tense_issue("活动将于11月2日开启。", now)
+    assert "预计" not in _sanitize_past_tense("预计10月29日开启。", now)
+    assert "已开启" in _sanitize_past_tense("10月28日会开启。", now)
+
     parser = _BingParser()
     parser.feed(sample)
     parser.close()

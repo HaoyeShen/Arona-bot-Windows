@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
 import os
 import threading
 import time
@@ -497,6 +498,15 @@ class WeChatAutoAdapter(BaseWeChatAdapter):
 
     def _chat_names(self, chat: str, username: str) -> list[str]:
         names = [chat]
+        # Long group names with a year range (e.g. "... 2018~2026") are often
+        # not returned by WeChat's search box as one token.  Also try the
+        # stable part before the range; opening that result still validates
+        # the full current title against all aliases.
+        base = re.sub(r"\s+\d{4}\s*[~～\-–—]\s*\d{4}.*$", "", chat).strip()
+        if base and base != chat:
+            names.append(base)
+            if len(base) > 24:
+                names.append(base[:24].rstrip())
         if self._db and username:
             try:
                 remark = str(self._db.get_nickname(username) or "").strip()
