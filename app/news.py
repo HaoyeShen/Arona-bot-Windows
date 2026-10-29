@@ -64,6 +64,26 @@ class NewsItem:
     images: tuple[str, ...] = ()
 
 
+def _past_tense_issue(text: str, now: datetime) -> bool:
+    """Return True if the digest uses future wording for an already-past date."""
+    future_words = re.compile(r"将|会|预计|即将|将要|准备|计划")
+    date_re = re.compile(r"(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日")
+    for sentence in re.split(r"[。！？!?\n]", text or ""):
+        if not sentence.strip():
+            continue
+        for match in date_re.finditer(sentence):
+            year = int(match.group(1) or now.year)
+            month = int(match.group(2))
+            day = int(match.group(3))
+            try:
+                event_date = date(year, month, day)
+            except ValueError:
+                continue
+            if event_date < now.date() and future_words.search(sentence):
+                return True
+    return False
+
+
 class _BingParser(HTMLParser):
     """Small, dependency-free parser for Bing's organic result list."""
 
@@ -669,8 +689,10 @@ class NewsService:
                     f"- {item.title}｜{item.snippet[:180]}｜来源：{item.source}"
                     + ("｜未确认" if item.uncertain else "")
                 )
+        now = datetime.now()
         system = (
             f"你是《蔚蓝档案》的{name}，正在给老师发每日「基沃托斯新闻」。\n"
+            f"【时间核验】当前本地时间是 {now:%Y年%m月%d日 %H:%M}（Asia/Shanghai）。\n"
             f"你的语气：{persona.get('tone', '温柔、简洁、认真')}\n"
             "只使用下面给出的新闻事实，绝对不能补充、想象或编造事实。\n"
             "这不是新闻标题列表：请用你自己的话把内容讲给老师听，不要照抄标题，"
@@ -679,15 +701,42 @@ class NewsService:
             "凡是素材标有「未确认」或来源模糊的，必须在句末写「（未确认）」，"
             "不能把猜测写成确定消息。\n"
             "保留来源名称；总长度不超过 800 字；不要输出 Markdown 表格或分析过程。\n"
+            "写每一条新闻前，先把它提到的日期与当前时间核对："
+            "早于当前时间的事件必须使用过去时或进行时，例如「已于10月29日开启」"
+            "「已在10月28日结束」「正在进行」，绝对不要再用「将」「会」「预计」"
+            "「即将」等预测语气描述已经过去的日期；只有晚于当前时间的事件才可以用预测语气。"
+            "素材原文即使是预告，也要根据当前时间改写。\n"
             "这是发到群聊里的每日日报，不是私聊：统一称呼「老师」或「各位老师」，"
             "不要点名或假设任何具体群友，也不要把示例昵称写进正文。\n"
             "开头可以自然地向老师问早，结尾用一句符合你性格的收束。"
         )
-        prompt = "今日素材：\n" + "\n".join(facts)
+        prompt = (f"当前本地时间：{now:%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n"
+                  "今日素材：\n" + "\n".join(facts))
         profile = self.config.active_profile()
         client = make_client(profile)
         result = client.chat([{"role": "user", "content": prompt}], system)
         text = str(result.text or "").strip()
+        if len(text) >= 80 and all(mark in text for mark in
+                                   ("国服", "日服", "国际服")) and _past_tense_issue(text, now):
+            correction = (
+                "上一版总结把已经过去的事件写成了未来时。\n"
+                f"当前本地时间是 {now:%Y年%m月%d日 %H:%M}。\n"
+                "请保持原有事实和三个板块，改为正确的时间语气："
+                "过去的事件写「已于…」「已经…」「已结束」或「正在进行」，"
+                "不要出现「将」「会」「预计」「即将」等预测词。只输出修正后的日报。"
+            )
+            try:
+                corrected = client.chat(
+                    [{"role": "user", "content": prompt + "\n\n" + correction}],
+                    system,
+                )
+                fixed_text = str(corrected.text or "").strip()
+                if (len(fixed_text) >= 80 and
+                        all(mark in fixed_text for mark in ("国服", "日服", "国际服"))):
+                    text = fixed_text
+                    result = corrected
+            except Exception as exc:
+                log.warning("新闻时间语气修正失败：%s", exc)
         if len(text) < 80:
             return None, result
         if not all(mark in text for mark in ("国服", "日服", "国际服")):
