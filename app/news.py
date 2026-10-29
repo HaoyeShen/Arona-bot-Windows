@@ -516,6 +516,27 @@ class NewsService:
     def _persona(self) -> dict:
         return self.personas.get(self.config.data.get("active_persona_id"))
 
+    @staticmethod
+    def _short_item(item: NewsItem) -> str:
+        text = (item.snippet or item.title).strip()
+        text = re.sub(r"\[图片\]|\[表情\]|https?://\S+", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        # Skip the standard official greeting before the useful sentence.
+        for prefix in ("“欢迎连接【什亭之箱】，老师。”", "“欢迎连接什亭之箱，老师。”",
+                       "欢迎连接【什亭之箱】，老师。"):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+        sentences = [part.strip() for part in re.split(r"(?<=[。！？!?])", text)
+                     if part.strip()]
+        picked = ""
+        for sentence in sentences:
+            if len(picked) + len(sentence) > 86:
+                break
+            picked += sentence
+        if not picked:
+            picked = text[:86]
+        return picked[:86].rstrip("，,；; ")
+
     def _fallback_message(self, grouped: dict[str, list[NewsItem]]) -> str:
         persona = self._persona()
         name = str(persona.get("name") or "阿洛娜")
@@ -538,7 +559,7 @@ class NewsService:
                 suffix = item.source
                 if item.uncertain:
                     suffix += "，未确认"
-                lines.append(f"· {item.title}（{suffix}）")
+                lines.append(f"· {self._short_item(item)}（{suffix}）")
         lines.extend(["", outro])
         return "\n".join(lines).strip()
 
@@ -552,17 +573,21 @@ class NewsService:
                 facts.append("- 今天暂无可靠消息")
             for item in grouped[region]:
                 facts.append(
-                    f"- {item.title}｜来源：{item.source}"
+                    f"- {item.title}｜{item.snippet[:180]}｜来源：{item.source}"
                     + ("｜未确认" if item.uncertain else "")
                 )
         system = (
             f"你是《蔚蓝档案》的{name}，正在给老师发每日「基沃托斯新闻」。\n"
             f"你的语气：{persona.get('tone', '温柔、简洁、认真')}\n"
             "只使用下面给出的新闻事实，绝对不能补充、想象或编造事实。\n"
+            "这不是新闻标题列表：请用你自己的话把内容讲给老师听，不要照抄标题，"
+            "也不要逐条写「标题：……」；每条用一句自然的中文概括，必要时补充一句影响。\n"
             "分为【国服】【日服】【国际服】三个板块，每段 1–2 条，每条简短。\n"
             "凡是素材标有「未确认」或来源模糊的，必须在句末写「（未确认）」，"
             "不能把猜测写成确定消息。\n"
             "保留来源名称；总长度不超过 800 字；不要输出 Markdown 表格或分析过程。\n"
+            "这是发到群聊里的每日日报，不是私聊：统一称呼「老师」或「各位老师」，"
+            "不要点名或假设任何具体群友，也不要把示例昵称写进正文。\n"
             "开头可以自然地向老师问早，结尾用一句符合你性格的收束。"
         )
         prompt = "今日素材：\n" + "\n".join(facts)
