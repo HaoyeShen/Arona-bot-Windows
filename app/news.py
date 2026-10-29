@@ -579,13 +579,14 @@ class NewsService:
         seen: set[str] = set()
         for region, first_query, second_query in self.REGIONS:
             if region == "国服":
-                for item in self._official_cn(timeout, fetch_limit):
+                # One official CN item is mandatory; the rest may come from
+                # public article sources.  This keeps the digest fresh while
+                # guaranteeing the official 快讯 is represented.
+                for item in self._official_cn(timeout, 1):
                     key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
                     if key and key not in seen:
                         seen.add(key)
                         result[region].append(item)
-                if result[region]:
-                    continue
             for query in (first_query, second_query):
                 for item in self._bilibili(query, region, timeout, fetch_limit):
                     key = re.sub(r"[^\w\u4e00-\u9fff]", "", item.title.lower())
