@@ -26,6 +26,7 @@ from typing import Callable
 from .config_store import ConfigStore, PersonaStore
 from .model_client import make_client
 from .paths import DATA
+from .prompting import reduce_ellipsis
 
 log = logging.getLogger(__name__)
 
@@ -757,6 +758,7 @@ class NewsService:
             "素材原文即使是预告，也要根据当前时间改写。\n"
             "这是发到群聊里的每日日报，不是私聊：统一称呼「老师」或「各位老师」，"
             "不要点名或假设任何具体群友，也不要把示例昵称写进正文。\n"
+            "尽量少用省略号，不要用「……」或「...」拖长语气。\n"
             "开头可以自然地向老师问早，结尾用一句符合你性格的收束。"
         )
         prompt = (f"当前本地时间：{now:%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n"
@@ -793,7 +795,7 @@ class NewsService:
             return None, result
         if not all(mark in text for mark in ("国服", "日服", "国际服")):
             return None, result
-        return text[:1000].strip(), result
+        return reduce_ellipsis(text[:1000].strip()), result
 
     def build_message(self, grouped: dict[str, list[NewsItem]]) -> tuple[str, object | None]:
         if not any(grouped.values()):
@@ -808,7 +810,7 @@ class NewsService:
             except Exception as exc:
                 log.warning("新闻模型总结失败，改用模板：%s", exc)
         fallback = self._fallback_message(grouped)
-        return _sanitize_past_tense(fallback, datetime.now()), None
+        return reduce_ellipsis(_sanitize_past_tense(fallback, datetime.now())), None
 
     @staticmethod
     def _item_key(item: NewsItem) -> str:

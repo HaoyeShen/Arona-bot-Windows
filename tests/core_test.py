@@ -23,6 +23,7 @@ from app.prompting import (
     build_system_prompt,
     fix_self_reference,
     at_mentioned,
+    reduce_ellipsis,
     parse_reply,
     resolve_sticker,
     select_fallback_sticker,
@@ -92,6 +93,10 @@ def test_prompt_and_stickers() -> None:
                                          target_type="friend", recipient_name="赵军情")
     assert_true("赵军情老师" in private_system,
                 "private address rule")
+    assert_true(reduce_ellipsis("唔……让我想想。") == "唔，让我想想。",
+                "ellipsis is reduced")
+    assert_true("…" not in reduce_ellipsis("今天先到这里……"),
+                "trailing ellipsis removed")
     assert_true(at_mentioned("@我的昵称 在吗", "我的昵称", ["阿洛娜"]),
                 "self nickname mention counts when enabled")
     assert_true(not at_mentioned("@我的昵称 在吗", "", ["阿洛娜"]),
