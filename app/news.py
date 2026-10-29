@@ -61,6 +61,7 @@ class NewsItem:
     source: str
     snippet: str = ""
     uncertain: bool = False
+    images: tuple[str, ...] = ()
 
 
 class _BingParser(HTMLParser):
@@ -206,6 +207,20 @@ def _http_text(url: str, timeout: float = 10.0) -> str:
     if match:
         charset = match.group(1)
     return raw.decode(charset, "replace")
+
+
+def _http_bytes(url: str, timeout: float = 15.0) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0 Safari/537.36",
+            "Referer": "https://bluearchive-cn.com/",
+        },
+    )
+    with _build_opener().open(request, timeout=timeout) as response:
+        return response.read(12_000_000)
 
 
 def _http_json(url: str, timeout: float = 10.0) -> dict:
@@ -397,7 +412,15 @@ class NewsService:
             published = float(row.get("publishTime") or 0) / 1000.0
             if published and published > 0 and now - published > 21 * 86400:
                 continue
-            content = _strip_html(str(row.get("content") or ""))
+            raw_content = str(row.get("content") or "")
+            image_urls = []
+            for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', raw_content, re.I):
+                src = unescape(src)
+                if src.startswith("//"):
+                    src = "https:" + src
+                if src.startswith("https://") and src not in image_urls:
+                    image_urls.append(src)
+            content = _strip_html(raw_content)
             content = re.sub(r"\s+", " ", content).strip()
             item_id = row.get("id")
             items.append(NewsItem(
@@ -408,6 +431,7 @@ class NewsService:
                 source="国服官网",
                 snippet=content[:500],
                 uncertain=False,
+                images=tuple(image_urls[:2]),
             ))
             if len(items) >= per_region:
                 break
@@ -459,6 +483,13 @@ class NewsService:
             article_id = row.get("id")
             url_item = (f"https://www.bilibili.com/read/cv{article_id}"
                         if article_id else "https://www.bilibili.com/")
+            image_urls = []
+            for src in (row.get("image_urls") or []):
+                src = unescape(str(src or ""))
+                if src.startswith("//"):
+                    src = "https:" + src
+                if src.startswith("https://") and src not in image_urls:
+                    image_urls.append(src)
             found.append(NewsItem(
                 region=region,
                 title=title[:110],
@@ -466,6 +497,7 @@ class NewsService:
                 source=source[:48],
                 snippet=snippet[:160],
                 uncertain=uncertain,
+                images=tuple(image_urls[:2]),
             ))
             if len(found) >= per_region:
                 break
@@ -513,6 +545,67 @@ class NewsService:
         return result
 
     # ---------------------------------------------------------------- content
+    def _enrich_images(self, grouped: dict[str, list[NewsItem]]) -> None:
+        """Read images attached to news articles via the configured vision model.
+
+        The daily digest stays text-only; image understanding is used only to
+        provide facts for the summary.  When the active profile has no vision
+        capability, images are skipped without failing the news job.
+        """
+        profile = self.config.active_profile()
+        if not bool(profile.get("supports_vision", False)):
+            log.info("新闻图片理解跳过：当前模型未启用视觉能力")
+            return
+        try:
+            from .model_client import ModelClient
+        except Exception:
+            return
+        seen: set[str] = set()
+        count = 0
+        cache_dir = Path(DATA) / "temp" / "news_images"
+        for region in ("国服", "日服", "国际服"):
+            for item in grouped.get(region, []):
+                descriptions = []
+                for url in item.images:
+                    if count >= 6 or url in seen:
+                        continue
+                    seen.add(url)
+                    try:
+                        raw = _http_bytes(url, timeout=15)
+                        if len(raw) < 1024:
+                            continue
+                        cache_dir.mkdir(parents=True, exist_ok=True)
+                        suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+                        if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                            suffix = ".jpg"
+                        path = cache_dir / f"news_{abs(hash(url))}{suffix}"
+                        path.write_bytes(raw)
+                        result = ModelClient(profile).describe_image(
+                            path,
+                            prompt=("请像新闻编辑一样读取这张《蔚蓝档案》图片："
+                                    "提取其中所有可读文字，尤其是活动名、角色名、卡池、日期、"
+                                    "版本、奖励和公告要点；只写确定看得见的内容，不要猜测，"
+                                    "60 字以内。"),
+                            timeout=90,
+                        )
+                        desc = str(result.text or "").strip().replace("\n", " ")[:160]
+                        if desc:
+                            descriptions.append(desc)
+                            if self.usage_callback:
+                                self.usage_callback(result, "news")
+                    except Exception as exc:
+                        log.debug("新闻图片读取失败 · %s · %s", url[:80], exc)
+                    finally:
+                        try:
+                            if 'path' in locals() and path.exists():
+                                path.unlink()
+                        except OSError:
+                            pass
+                    count += 1
+                if descriptions:
+                    item.snippet = (item.snippet + "\n[图片内容] " +
+                                    "；".join(descriptions))[:900]
+
     def _persona(self) -> dict:
         return self.personas.get(self.config.data.get("active_persona_id"))
 
@@ -634,6 +727,7 @@ class NewsService:
                     "last_attempt_date": current.date().isoformat(),
                 })
             grouped = self.fetch()
+            self._enrich_images(grouped)
             if not any(grouped.values()):
                 self._save_state({"last_error": "没有检索到可靠新闻"})
                 return {"sent": False, "reason": "没有检索到可靠新闻"}
@@ -670,6 +764,7 @@ class NewsService:
     def preview(self) -> dict:
         """Fetch and render without sending (used by the settings page)."""
         grouped = self.fetch()
+        self._enrich_images(grouped)
         if not any(grouped.values()):
             return {"message": "", "items": grouped}
         message, usage_result = self.build_message(grouped)
