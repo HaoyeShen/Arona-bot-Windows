@@ -137,7 +137,7 @@ class ListenReplyPage(BasePage):
         self.stale_minutes.pack(fill="x", pady=(0, px(7)))
         self.quote_reply = ToggleRow(
             timing.body, "使用微信引用回复",
-            "回复时引用对方最新一条消息；失败会自动改为普通发送。",
+            "引用阿洛娜正在回复的那条消息；找不到时自动改为普通发送。",
             self.config.bot.get("quote_reply", False),
         )
         self.quote_reply.pack(fill="x", pady=px(5))
