@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import re
+
 from .paths import DATA
 
 log = logging.getLogger(__name__)
@@ -127,11 +129,44 @@ class BaseWeChatAdapter:
     def send_text(self, chat: str, text: str) -> SendResult:
         raise NotImplementedError
 
-    def send_quoted_text(self, chat: str, text: str) -> SendResult:
+    def send_quoted_text(self, chat: str, text: str, quote_text: str = "") -> SendResult:
         """Adapters without native quote support fall back to a normal text."""
         return self.send_text(chat, text)
 
-    def send_quoted_text(self, chat: str, text: str) -> SendResult:
+    def _right_click_quote_message(self, chat: str, quote_text: str) -> bool:
+        """Right-click the specific incoming bubble that ARONA is answering."""
+        if not quote_text.strip():
+            return False
+        uia = self._uia
+        if uia is None:
+            return False
+        if uia.current_chat() != chat and not uia.open_chat(chat):
+            return False
+        needle = re.sub(r"\s+", "", quote_text)[:32]
+        if not needle:
+            return False
+
+        def predicate(class_name: str, name: str) -> bool:
+            normalized = re.sub(r"\s+", "", name or "")
+            return (needle in normalized and
+                    not normalized.startswith("引用") and
+                    "ChatTextItemView" in class_name)
+
+        found = uia.find_in_message_list(predicate, max_scrolls=12)
+        if not found:
+            return False
+        _class_name, _name, rect = found
+        cx = max(rect.left + 8, min(rect.right - 8,
+                                    (rect.left + rect.right) // 2))
+        cy = max(rect.top + 8, min(rect.bottom - 8,
+                                   (rect.top + rect.bottom) // 2))
+        uia._set_cursor(cx, cy)
+        time.sleep(0.2)
+        uia._right_click()
+        time.sleep(0.8)
+        return True
+
+    def send_quoted_text(self, chat: str, text: str, quote_text: str = "") -> SendResult:
         if not text.strip():
             return SendResult(False, "消息内容为空")
         username = self._usernames.get(chat, "")
@@ -142,9 +177,8 @@ class BaseWeChatAdapter:
             try:
                 menu = None
                 for _attempt in range(3):
-                    point = self._uia._right_click_latest_row(chat)
-                    if not point:
-                        return SendResult(False, "引用失败：无法定位最新消息")
+                    if not self._right_click_quote_message(chat, quote_text):
+                        return SendResult(False, "引用失败：没有定位到被回复的消息")
                     # The popup can disappear while the UIA tree is traversed;
                     # re-open it if necessary and scan immediately.
                     deadline = time.time() + 2.0

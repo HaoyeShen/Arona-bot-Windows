@@ -622,6 +622,48 @@ def at_mentioned(content: str, bot_name: str, self_names: Iterable[str] = ()) ->
     return True
 
 
+def addressed_to_bot(content: str, names: list[str] | tuple[str, ...]) -> bool:
+    """Heuristic: is this message actually calling/asking the bot?
+
+    A bare mention ("阿洛娜好可爱") is not enough; require a vocative,
+    a leading name, a trailing name, or a direct request after the name.
+    """
+    text = (content or "").strip()
+    if not text:
+        return False
+    request_after = (
+        "你好", "您好", "早安", "早上好", "晚上好", "晚安", "在吗", "在不在",
+        "帮我", "帮忙", "帮我看看", "看一下", "看看", "你觉得", "你认为",
+        "你能", "你可以", "能不能", "可以", "请问", "告诉我", "回答",
+        "过来", "陪我", "说说", "讲讲", "怎么办", "为什么", "是不是",
+        "有没有", "今天", "现在", "在干嘛", "在做什么",
+    )
+    for raw_name in names:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        escaped = re.escape(name)
+        # Leading vocative or leading direct request: 阿洛娜，... / 阿洛娜帮我...
+        if re.search(rf"^\s*{escaped}(?:[，,。！？!?、\s]|$)", text, re.I):
+            return True
+        if re.search(rf"^\s*{escaped}(?:{'|'.join(map(re.escape, request_after))})",
+                     text, re.I):
+            return True
+        # Name after a vocative separator: 在吗，阿洛娜 / 阿洛娜！
+        if re.search(rf"(?:^|[，,。！？!?、\s]){escaped}[。！？!?~～…，,\s]*$",
+                     text, re.I):
+            return True
+        # Name followed by a direct request anywhere: ...阿洛娜帮我看...
+        if re.search(rf"{escaped}(?:{'|'.join(map(re.escape, request_after))})",
+                     text, re.I):
+            return True
+        # "问一下阿洛娜 / 找阿洛娜 / 跟阿洛娜说"
+        if re.search(rf"(?:问|找|叫|请|跟|和|对)(?:一下|下)?\s*{escaped}",
+                     text, re.I):
+            return True
+    return False
+
+
 def clean_incoming(content: str, bot_name: str = "", strip_at: bool = True) -> str:
     text = (content or "").strip()
     if strip_at:

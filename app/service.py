@@ -23,6 +23,7 @@ from .news import NewsService
 from .paths import DATA, ROOT
 from .prompting import (
     address_name,
+    addressed_to_bot,
     at_mentioned,
     build_compact_system_prompt,
     build_context_messages,
@@ -725,9 +726,8 @@ class BotService:
             at_persona = at_mentioned(raw_content, "", ["阿洛娜", "Arona"])
             trigger_enabled = bool(self.config.bot.get("trigger_enabled", True))
             trigger_words = self.config.bot.get("trigger_keywords") or []
-            trigger_hit = bool(trigger_enabled and any(
-                str(word).strip() and str(word).lower() in raw_content.lower()
-                for word in trigger_words
+            trigger_hit = bool(trigger_enabled and addressed_to_bot(
+                raw_content, trigger_words
             ))
             self_mentioned = bool(
                 self_name and
@@ -1284,7 +1284,9 @@ class BotService:
         if text:
             quote_enabled = bool(self.config.bot.get("quote_reply", False))
             if quote_enabled and hasattr(self._adapter, "send_quoted_text"):
-                send_result = self._adapter.send_quoted_text(incoming.chat, text)
+                send_result = self._adapter.send_quoted_text(
+                    incoming.chat, text, quote_text=incoming.content or ""
+                )
                 if not send_result.ok:
                     log.warning("引用发送失败，改为普通发送：%s · %s",
                                 incoming.chat, send_result.message)
