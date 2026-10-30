@@ -13,6 +13,7 @@ $env:TMP = $LocalTemp
 $Venv = Join-Path $Root ".venv"
 $VenvPython = Join-Path $Venv "Scripts\python.exe"
 $VenvPythonW = Join-Path $Venv "Scripts\pythonw.exe"
+$IconExe = Join-Path $Venv "Scripts\ARONA.exe"
 
 function Show-Message([string]$Text, [string]$Title = "ARONA") {
     Write-Host ""
@@ -152,13 +153,25 @@ if ($InstallOnly) {
     exit 0
 }
 
+# Give the taskbar and title bar the ARONA icon.  Windows uses the process
+# executable icon for the taskbar, so a plain pythonw.exe launch still shows
+# the Python icon even when Tk's iconphoto is set.
+if (-not (Test-Path -LiteralPath $IconExe) -or
+    -not (Test-Path -LiteralPath (Join-Path $Venv "Scripts\ARONA.iconv2"))) {
+    try {
+        & $VenvPython (Join-Path $Root "scripts\make_icon_exe.py") 1>$null 2>$null
+    } catch {}
+}
+
 Write-Host "  启动 ARONA…" -ForegroundColor Green
 if ($Console) {
     & $VenvPython (Join-Path $Root "run.py")
     exit $LASTEXITCODE
 }
 
-if (Test-Path -LiteralPath $VenvPythonW) {
+if (Test-Path -LiteralPath $IconExe) {
+    Start-Process -FilePath $IconExe -ArgumentList @("run.py") -WorkingDirectory $Root
+} elseif (Test-Path -LiteralPath $VenvPythonW) {
     Start-Process -FilePath $VenvPythonW -ArgumentList @("run.py") -WorkingDirectory $Root
 } else {
     Start-Process -FilePath $VenvPython -ArgumentList @("run.py") -WorkingDirectory $Root
