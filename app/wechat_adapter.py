@@ -133,6 +133,9 @@ class BaseWeChatAdapter:
         """Adapters without native quote support fall back to a normal text."""
         return self.send_text(chat, text)
 
+    def ensure_chat_open(self, chat: str) -> bool:
+        return False
+
     def _right_click_quote_message(self, chat: str, quote_text: str) -> bool:
         """Right-click the specific incoming bubble that ARONA is answering."""
         if not quote_text.strip():
@@ -609,6 +612,10 @@ class WeChatAutoAdapter(BaseWeChatAdapter):
             except Exception:
                 pass
         return list(dict.fromkeys(names))
+
+    def ensure_chat_open(self, chat: str) -> bool:
+        with self._ui_lock:
+            return self._open_chat(chat)
 
     def _open_chat(self, chat: str) -> bool:
         if not self._uia:

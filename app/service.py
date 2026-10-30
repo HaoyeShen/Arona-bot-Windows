@@ -92,6 +92,7 @@ class BotService:
         self._load_admin_state()
         self._balance_lock = threading.Lock()
         self._balance_busy = False
+        self._voice_sender = None
         self._balance: dict[str, Any] = {
             "ok": False, "available": None, "text": "未查询",
             "note": "", "updated": 0.0, "model_id": "",
@@ -1147,6 +1148,37 @@ class BotService:
         )
         return text
 
+    def _send_voice_reply(self, chat: str, text: str) -> bool:
+        """Try a native WeChat voice bubble; caller falls back to text."""
+        adapter = self._adapter
+        if not adapter or not text.strip():
+            return False
+        try:
+            if hasattr(adapter, "ensure_chat_open") and not adapter.ensure_chat_open(chat):
+                log.warning("语音发送前无法打开会话：%s", chat)
+                return False
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+            from wecvoice_auto import VoiceSender
+            if self._voice_sender is None:
+                self._voice_sender = VoiceSender()
+            result = self._voice_sender.send(
+                text,
+                chat=chat,
+                voice=str(self.config.bot.get("voice_name", "arona") or "arona"),
+            )
+            if result.ok:
+                log.info("语音气泡已发送 · %s · %s · %.1fs",
+                         chat, result.voice, result.total_seconds)
+                return True
+            log.warning("语音气泡发送失败，回退文字：%s", result.message)
+        except Exception as exc:
+            log.warning("语音气泡发送异常，回退文字：%s", exc)
+        return False
+
     def _apply_reply_style(self, text: str) -> str:
         if not bool(self.config.bot.get("replace_punctuation", False)):
             return text
@@ -1280,8 +1312,23 @@ class BotService:
 
         sent_text = False
         sticker_sent = False
+        voice_sent = False
         send_message = ""
-        if text:
+        voice_enabled = bool(self.config.bot.get("voice_enabled", False))
+        try:
+            voice_probability = max(0.0, min(1.0, float(
+                self.config.bot.get("voice_probability", 0.5)
+            )))
+        except (TypeError, ValueError):
+            voice_probability = 0.5
+        if (text and voice_enabled and not is_serious(user_content)
+                and random.random() < voice_probability):
+            voice_sent = self._send_voice_reply(incoming.chat, text)
+            if voice_sent:
+                sent_text = True
+                send_message = "语音气泡"
+                chosen = None
+        if text and not voice_sent:
             quote_enabled = bool(self.config.bot.get("quote_reply", False))
             if quote_enabled and hasattr(self._adapter, "send_quoted_text"):
                 send_result = self._adapter.send_quoted_text(
@@ -1304,7 +1351,7 @@ class BotService:
             sent_text = True
             send_message = send_result.message
             self._remember_bot_sent(incoming.chat, text)
-        if chosen:
+        if chosen and not voice_sent:
             sticker_path = self.stickers.path_for(chosen)
             sticker_result = self._adapter.send_sticker(incoming.chat, sticker_path)
             if sticker_result.ok:
@@ -1339,7 +1386,8 @@ class BotService:
                      int(result.usage.get("prompt", 0) or 0),
                      int(result.usage.get("completion", 0) or 0),
                      int(usage_saved.get("total", 0)), latency,
-                     f" · 表情包：{chosen.get('name')}" if sticker_sent else "",
+                     (f" · 表情包：{chosen.get('name')}" if sticker_sent else "") +
+                     (" · 语音气泡" if voice_sent else ""),
                      (reply_text or "（仅表情包）").replace("\n", " ")[:160])
         else:
             log.info("已回复 %s · 模型=%s/%s · tokens 输入=%d 输出=%d 本次=%d · %d ms%s · 内容已隐藏",
@@ -1353,6 +1401,7 @@ class BotService:
             "user_content": user_content,
             "content": reply_text,
             "sticker": chosen.get("name", "") if sticker_sent else "",
+            "voice": voice_sent,
             "sticker_file": str(self.stickers.path_for(chosen)) if chosen and sticker_sent else "",
             "latency_ms": latency,
             "model": result.model,

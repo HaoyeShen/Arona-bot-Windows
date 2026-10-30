@@ -140,6 +140,12 @@ class ConfigStore:
         except (TypeError, ValueError):
             bot["stale_reply_minutes"] = 10
         bot["quote_reply"] = bool(bot.get("quote_reply", False))
+        bot["voice_enabled"] = bool(bot.get("voice_enabled", False))
+        try:
+            bot["voice_probability"] = max(0.0, min(1.0, float(bot.get("voice_probability", 0.5))))
+        except (TypeError, ValueError):
+            bot["voice_probability"] = 0.5
+        bot["voice_name"] = str(bot.get("voice_name") or "arona")
         bot["replace_punctuation"] = bool(bot.get("replace_punctuation", False))
         bot["trigger_enabled"] = bool(bot.get("trigger_enabled", True))
         keywords = bot.get("trigger_keywords")

@@ -154,6 +154,30 @@ class ListenReplyPage(BasePage):
             justify="left", wraplength=px(420),
         ).pack(fill="x", pady=(px(5), 0))
 
+        voice = Card(right, padding=16, accent=C["cyan"])
+        voice.pack(fill="x", pady=(px(12), 0))
+        SectionHeading(voice.body, "语音气泡", "偶尔用声音回复").pack(
+            fill="x", pady=(0, px(8))
+        )
+        self.voice_enabled = ToggleRow(
+            voice.body, "允许发送微信语音气泡",
+            "开启后按概率把文字回复改为语音；失败会保留文字发送。",
+            self.config.bot.get("voice_enabled", False),
+        )
+        self.voice_enabled.pack(fill="x", pady=px(4))
+        self.voice_probability = LabeledEntry(
+            voice.body, "语音概率（%）",
+            str(round(float(self.config.bot.get("voice_probability", 0.5)) * 100)),
+            hint="默认 50", width=8,
+        )
+        self.voice_probability.pack(fill="x", pady=(px(4), px(3)))
+        tk.Label(
+            voice.body,
+            text="需要 WecVoice-auto、VB-CABLE 虚拟声卡和微信语音权限；语音音色默认阿洛娜。",
+            bg=C["card"], fg=C["muted"], font=font(7), anchor="w",
+            justify="left", wraplength=px(420),
+        ).pack(fill="x")
+
         trigger = Card(right, padding=16)
         trigger.pack(fill="x", pady=(px(12), 0))
         SectionHeading(trigger.body, "关键词触发", "没 @ 也可能是在叫她").pack(
@@ -191,6 +215,9 @@ class ListenReplyPage(BasePage):
             probability = max(0, min(100, int(float(
                 self.group_probability_value.get() or 30
             ))))
+            voice_probability = max(0, min(100, int(float(
+                self.voice_probability.get() or 50
+            ))))
             for value in (self.quiet_start.get(), self.quiet_end.get()):
                 if value:
                     datetime.strptime(value, "%H:%M")
@@ -211,6 +238,8 @@ class ListenReplyPage(BasePage):
             "group_at_include_self_name": self.group_at_self_name.get(),
             "group_probability_reply": self.group_probability.get(),
             "group_reply_probability": probability / 100.0,
+            "voice_enabled": self.voice_enabled.get(),
+            "voice_probability": voice_probability / 100.0,
             "stale_reply_minutes": stale,
             "quote_reply": self.quote_reply.get(),
             "replace_punctuation": self.replace_punctuation.get(),
