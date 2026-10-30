@@ -9,7 +9,7 @@ if (Test-Path -LiteralPath $IconExe) {
     $Target = $IconExe
     $Arguments = "`"$(Join-Path $Root 'run.py')`""
 }
-$Icon = Join-Path $Root "assets\arona_icon.ico"
+$Icon = if (Test-Path -LiteralPath $IconExe) { $IconExe } else { Join-Path $Root "assets\arona_icon.ico" }
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $Target

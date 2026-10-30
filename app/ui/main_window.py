@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -75,21 +76,69 @@ class MainWindow:
             self.root.after(2000, self._auto_start)
 
     # ------------------------------------------------------------------ build
+    def _apply_native_icon(self) -> None:
+        """Set both the small and big Win32 icons explicitly.
+
+        Tk's iconphoto/iconbitmap often leaves the small icon (the one used by
+        the title bar) unset on Windows, which renders as a blank page.  The
+        taskbar also prefers the class small icon, so set both class slots.
+        """
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            ico = ASSETS / "arona_icon.ico"
+            if not ico.exists():
+                return
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            large = wintypes.HICON()
+            small = wintypes.HICON()
+            shell32.ExtractIconExW.argtypes = [
+                wintypes.LPCWSTR, ctypes.c_int,
+                ctypes.POINTER(wintypes.HICON), ctypes.POINTER(wintypes.HICON),
+                ctypes.c_uint,
+            ]
+            shell32.ExtractIconExW.restype = ctypes.c_uint
+            count = shell32.ExtractIconExW(str(ico), 0,
+                                           ctypes.byref(large),
+                                           ctypes.byref(small), 1)
+            if not count:
+                return
+            hwnd = user32.GetAncestor(self.root.winfo_id(), 2)  # GA_ROOT
+            if not hwnd:
+                hwnd = self.root.winfo_id()
+            WM_SETICON = 0x0080
+            if small:
+                user32.SendMessageW(hwnd, WM_SETICON, 0, small)
+                user32.SetClassLongPtrW(hwnd, -34, small)  # GCLP_HICONSM
+            if large:
+                user32.SendMessageW(hwnd, WM_SETICON, 1, large)
+                user32.SetClassLongPtrW(hwnd, -14, large)  # GCLP_HICON
+        except Exception as exc:
+            log.debug("设置 Win32 图标失败：%s", exc)
+
     def _configure_root(self) -> None:
         root = self.root
         root.title("ARONA · 什亭之匣微信助手")
         root.configure(bg=C["bg"])
-        if self.icon:
-            try:
-                root.iconphoto(True, self.icon)
-            except Exception:
-                pass
+        # iconbitmap first, then iconphoto: on Windows Tk's iconbitmap sets
+        # only the large/class icon, while the later iconphoto also fills the
+        # small title-bar icon.  The reverse order leaves a blank small icon.
         try:
             ico = ASSETS / "arona_icon.ico"
             if ico.exists():
                 root.iconbitmap(default=str(ico))
         except Exception:
             pass
+        if self.icon:
+            try:
+                root.iconphoto(True, self.icon)
+            except Exception:
+                pass
+        root.after(250, self._apply_native_icon)
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
         width = min(px(1390), max(1080, screen_w - px(80)))
