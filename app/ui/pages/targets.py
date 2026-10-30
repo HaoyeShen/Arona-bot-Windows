@@ -181,6 +181,12 @@ class TargetRow(tk.Frame):
         tk.Label(mid, text=note, bg=bg, fg=C["muted"], font=font(8), anchor="w").pack(fill="x")
         actions = tk.Frame(inner, bg=bg)
         actions.pack(side="right")
+        if target.get("type") == "group":
+            RoundedButton(
+                actions, text="新闻开" if target.get("news_enabled") else "新闻关",
+                command=lambda: page.toggle_news(target),
+                style="ghost", width=52, height=28, bg=bg, font_size=7,
+            ).pack(side="left")
         RoundedButton(actions, text="同步上下文", command=lambda: page.sync(target),
                       style="ghost", width=82, height=28, bg=bg, font_size=7).pack(side="left")
         if target.get("type") == "group":
@@ -364,6 +370,18 @@ class TargetsPage(BasePage):
                 self.after(0, lambda message=message: self.app.toast("同步失败：" + message, "error"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def toggle_news(self, target: dict) -> None:
+        try:
+            self.config.update_target(target["id"], {
+                "news_enabled": not bool(target.get("news_enabled")),
+            })
+        except Exception as exc:
+            self.app.toast("切换新闻失败：" + str(exc), "error")
+            return
+        state = "开启" if self.config.target_by_name(target["name"]).get("news_enabled") else "关闭"
+        self.app.toast(f"「{target['name']}」每日新闻已{state}。", "success")
+        self.refresh()
 
     def clear_context(self, target: dict) -> None:
         if not confirm(self.winfo_toplevel(), "清空群聊上下文",
