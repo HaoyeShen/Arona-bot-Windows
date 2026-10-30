@@ -45,6 +45,8 @@ def main() -> int:
             "enabled": True, "send_time": "06:50", "target_chat": "新闻群",
             "max_items": 2, "timeout": 10, "use_model_summary": False,
         }
+        for item in config.targets():
+            item["news_enabled"] = False
         config.save()
         service = NewsService(config, PersonaStore(), state_path=Path(tmp) / "state.json")
         adapter = _RecordingAdapter(config, lambda _message: None)
@@ -72,6 +74,8 @@ def main() -> int:
 
         # Disabled means absolutely no fetch.
         config.data["news"]["enabled"] = False
+        for item in config.targets():
+            item["news_enabled"] = False
         called = False
 
         def must_not_fetch():

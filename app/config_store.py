@@ -135,6 +135,19 @@ class ConfigStore:
             group_probability = 0.3
         bot["group_reply_probability"] = max(0.0, min(1.0, group_probability))
         bot["group_at_include_self_name"] = bool(bot.get("group_at_include_self_name", True))
+        try:
+            bot["stale_reply_minutes"] = max(1, min(1440, int(bot.get("stale_reply_minutes", 10))))
+        except (TypeError, ValueError):
+            bot["stale_reply_minutes"] = 10
+        bot["quote_reply"] = bool(bot.get("quote_reply", False))
+        bot["replace_punctuation"] = bool(bot.get("replace_punctuation", False))
+        bot["trigger_enabled"] = bool(bot.get("trigger_enabled", True))
+        keywords = bot.get("trigger_keywords")
+        if isinstance(keywords, str):
+            keywords = [line.strip() for line in keywords.replace("，", ",").split(",") if line.strip()]
+        if not isinstance(keywords, list):
+            keywords = ["阿洛娜", "Arona", "ARONA"]
+        bot["trigger_keywords"] = [str(k).strip() for k in keywords if str(k).strip()] or ["阿洛娜"]
         bot["context_summary_enabled"] = bool(bot.get("context_summary_enabled", True))
         for key_name, default_value, low, high in (
             ("context_summary_threshold_chars", 6000, 2000, 50000),
@@ -200,6 +213,13 @@ class ConfigStore:
                 ))
             except (TypeError, ValueError):
                 target_group_probability = float(bot.get("group_reply_probability", 0.3))
+            try:
+                news_time = str(t.get("news_time") or "06:50")
+                _nh, _nm = news_time.split(":", 1)
+                if not (0 <= int(_nh) <= 23 and 0 <= int(_nm) <= 59):
+                    raise ValueError
+            except (TypeError, ValueError):
+                news_time = "06:50"
             clean_targets.append({
                 "id": t.get("id") or uuid.uuid4().hex[:12],
                 "name": name,
@@ -210,10 +230,27 @@ class ConfigStore:
                 "context_limit": max(20, min(100, target_context)),
                 "reply_probability": max(0.0, min(1.0, target_probability)),
                 "group_reply_probability": max(0.0, min(1.0, target_group_probability)),
+                "news_enabled": bool(t.get("news_enabled", False)),
+                "news_time": news_time,
                 "note": str(t.get("note", "")),
                 "added_at": t.get("added_at") or _now(),
             })
         data["targets"] = clean_targets
+        # Migrate the old single global news target to the new per-group switch
+        # once, without overriding groups the user already configured.
+        legacy_news = data.setdefault("news", {})
+        if any(t.get("news_enabled") for t in clean_targets):
+            legacy_news["per_target"] = True
+            legacy_news["enabled"] = False
+        if (legacy_news.get("enabled") and legacy_news.get("target_chat")
+                and not any(t.get("news_enabled") for t in clean_targets)):
+            for target in clean_targets:
+                if target["name"] == str(legacy_news.get("target_chat")):
+                    target["news_enabled"] = True
+                    target["news_time"] = str(legacy_news.get("send_time") or "06:50")
+                    legacy_news["per_target"] = True
+                    legacy_news["enabled"] = False
+                    break
         data["wechat"]["backend"] = data["wechat"].get("backend", "auto")
         if data["wechat"]["backend"] not in ("auto", "wechatauto"):
             data["wechat"]["backend"] = "auto"

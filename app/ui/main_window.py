@@ -15,6 +15,7 @@ from ..service import BotService
 from .dialogs import DiagnosticsDialog, ReplyDetailDialog
 from .pages.dashboard import DashboardPage
 from .pages.debug import DebugPage
+from .pages.listen_reply import ListenReplyPage
 from .pages.logs import LogsPage
 from .pages.models import ModelsPage
 from .pages.monitor import MonitorPage
@@ -33,6 +34,7 @@ PAGE_CLASSES = {
     "monitor": MonitorPage,
     "stickers": StickersPage,
     "targets": TargetsPage,
+    "listen_reply": ListenReplyPage,
     "personas": PersonasPage,
     "training": TrainingPage,
     "models": ModelsPage,
@@ -196,7 +198,7 @@ class MainWindow:
             pass
         if not self.config.targets():
             self.root.after(700, lambda: self.toast.show(
-                "阿洛娜已就位。先在「监听对象」添加白名单，再启动机器人。", "info", 6500))
+                "阿洛娜已就位。先在「测试对象」添加白名单，再启动机器人。", "info", 6500))
         else:
             self.root.after(700, lambda: self.toast.show("阿洛娜已就位，随时可以开始。", "success"))
 
@@ -257,7 +259,7 @@ class MainWindow:
         if self.service.state().get("starting"):
             return
         if not self.config.enabled_targets():
-            if not confirm(self.root, "尚未设置监听对象",
+            if not confirm(self.root, "尚未设置测试对象",
                            "当前白名单为空。启动后阿洛娜不会监听或回复任何人。\n"
                            "可以先添加对象，或仍然启动以检查微信连接。",
                            ok_text="仍然启动", icon=self.icon):
@@ -412,12 +414,12 @@ class MainWindow:
         self.refresh_header()
         if not self.service.running:
             return
-        self.toast.show("正在热更新监听对象…", "info")
+        self.toast.show("正在热更新测试对象…", "info")
 
         def worker():
             ok = self.service.restart_listening()
             self.root.after(0, lambda: self.toast.show(
-                "监听对象已热更新。" if ok else "监听更新失败，请查看日志。",
+                "测试对象已热更新。" if ok else "测试更新失败，请查看日志。",
                 "success" if ok else "error"))
 
         threading.Thread(target=worker, daemon=True).start()

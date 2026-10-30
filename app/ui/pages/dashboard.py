@@ -212,7 +212,7 @@ class DashboardPage(BasePage):
             metrics.grid_columnconfigure(i, weight=1, uniform="metric")
         self.m_wechat = MetricCard(metrics, "微信连接", "待机", "UI Automation 通道", C["green"], "◎")
         self.m_replies = MetricCard(metrics, "今日回复", "0", "阿洛娜发出的消息", C["cyan_deep"], "✦")
-        self.m_targets = MetricCard(metrics, "监听对象", "0", "仅回复白名单会话", C["pink_deep"], "◇")
+        self.m_targets = MetricCard(metrics, "测试对象", "0", "仅回复白名单会话", C["pink_deep"], "◇")
         self.m_context = MetricCard(metrics, "上下文记忆", "30 条", "最近对话自动带入", C["blue"], "≡")
         for i, card in enumerate((self.m_wechat, self.m_replies, self.m_targets, self.m_context)):
             card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else px(6),

@@ -78,7 +78,8 @@ def main() -> int:
                            "context_limit": 30, "auto_reply": True,
                            "group_at_always_reply": True,
                            "group_probability_reply": True,
-                           "group_reply_probability": 0.0})
+                           "group_reply_probability": 0.0,
+                           "trigger_enabled": False})
         config.add_target("测试会话", "friend", "arona")
         group_target = config.add_target("测试群", "group", "arona", require_at=True)
         group_target["group_reply_probability"] = 0.0

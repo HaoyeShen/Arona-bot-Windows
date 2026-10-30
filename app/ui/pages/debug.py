@@ -276,7 +276,7 @@ class DebugPage(BasePage):
         tk.Label(tips.body,
                  text="• 这里的对话不会发送到微信\n"
                       "• 阿洛娜会读取最近 20+ 条调试上下文\n"
-                      "• 想测试真实回复，请先在「监听对象」添加白名单\n"
+                      "• 想测试真实回复，请先在「测试对象」添加白名单\n"
                       "• 自动调试不会截屏或录制屏幕",
                  bg=C["card_soft"], fg=C["text_soft"], font=font(8), justify="left",
                  anchor="w", wraplength=px(275)).pack(fill="x", pady=(px(7), 0))

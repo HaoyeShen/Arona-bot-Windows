@@ -127,6 +127,55 @@ class BaseWeChatAdapter:
     def send_text(self, chat: str, text: str) -> SendResult:
         raise NotImplementedError
 
+    def send_quoted_text(self, chat: str, text: str) -> SendResult:
+        """Adapters without native quote support fall back to a normal text."""
+        return self.send_text(chat, text)
+
+    def send_quoted_text(self, chat: str, text: str) -> SendResult:
+        if not text.strip():
+            return SendResult(False, "消息内容为空")
+        username = self._usernames.get(chat, "")
+        before = self._last_seq(username) if username else 0
+        with self._ui_lock:
+            if not self._open_chat(chat):
+                return SendResult(False, "无法打开微信会话", chat)
+            try:
+                menu = None
+                for _attempt in range(3):
+                    point = self._uia._right_click_latest_row(chat)
+                    if not point:
+                        return SendResult(False, "引用失败：无法定位最新消息")
+                    # The popup can disappear while the UIA tree is traversed;
+                    # re-open it if necessary and scan immediately.
+                    deadline = time.time() + 2.0
+                    while time.time() < deadline:
+                        menu = self._uia._uia_find_menu_item("引用")
+                        if menu is not None:
+                            break
+                        time.sleep(0.12)
+                    if menu is not None:
+                        break
+                    try:
+                        ctypes.windll.user32.keybd_event(0x1B, 0, 0, 0)
+                        ctypes.windll.user32.keybd_event(0x1B, 0, 2, 0)
+                    except Exception:
+                        pass
+                if menu is None:
+                    return SendResult(False, "引用失败：没有找到引用菜单")
+                if not self._uia._uia_click_menu_item(menu):
+                    return SendResult(False, "引用失败：无法点击引用菜单")
+                time.sleep(0.6)
+                ok = bool(self._uia.send_text(text))
+            except Exception as exc:
+                log.exception("wechatauto 引用发送失败")
+                return SendResult(False, "引用发送失败", str(exc))
+        if not ok:
+            return SendResult(False, "引用后 UIA 输入/发送校验失败")
+        self._remember_sent(chat, text)
+        if username and not self._wait_outgoing(username, before, "text", timeout=3.0):
+            log.warning("wechatauto 已执行引用发送，但数据库尚未确认：%s", chat)
+        return SendResult(True, "已引用发送")
+
     def send_sticker(self, chat: str, path: Path) -> SendResult:
         raise NotImplementedError
 
@@ -425,6 +474,7 @@ class WeChatAutoAdapter(BaseWeChatAdapter):
             origin="self" if outgoing else "friend",
             image_path=image_path,
             raw=msg,
+            received_at=float(msg.get("create_time") or time.time()),
         )
 
     def _on_db_message(self, msg: dict, listener=None) -> None:

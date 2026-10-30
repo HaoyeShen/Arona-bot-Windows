@@ -305,7 +305,7 @@ class PersonasPage(BasePage):
             self.app.toast("至少需要保留一个人格。", "warn")
             return
         if not confirm(self.winfo_toplevel(), "删除人格",
-                       f"确定删除「{persona.get('name')}」吗？\n使用该人格的监听对象会回退到默认人格。",
+                       f"确定删除「{persona.get('name')}」吗？\n使用该人格的测试对象会回退到默认人格。",
                        ok_text="删除", danger=True, icon=self.icon):
             return
         self.personas.delete(persona["id"])

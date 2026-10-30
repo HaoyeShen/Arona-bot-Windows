@@ -452,11 +452,11 @@ def run_diagnostics(service, run_model: bool = True, run_chat_test: bool = False
     step(13, "检查监听白名单")
     targets = service.config.enabled_targets()
     checks.append(_check(
-        "监听对象白名单",
+        "测试对象白名单",
         "ok" if targets else "warn",
         f"{len(targets)} 个启用对象：" + "、".join(t["name"] for t in targets[:5])
-        if targets else "尚未添加任何监听对象",
-        "" if targets else "在「监听对象」页添加好友或群聊名称；未加入白名单的会话不会收到回复",
+        if targets else "尚未添加任何测试对象",
+        "" if targets else "在「测试对象」页添加好友或群聊名称；未加入白名单的会话不会收到回复",
     ))
 
     # 14. End-to-end conversation test ---------------------------------

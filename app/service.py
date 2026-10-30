@@ -700,6 +700,13 @@ class BotService:
             log.info("该聊天已暂停智能回复，忽略消息：%s", incoming.chat)
             return
 
+        stale_minutes = max(1, min(1440, int(self.config.bot.get("stale_reply_minutes", 10))))
+        if (incoming.received_at and
+                time.time() - float(incoming.received_at) > stale_minutes * 60):
+            self._store_user(incoming, content)
+            log.info("消息已超过 %d 分钟，只写入上下文、不回复：%s", stale_minutes, incoming.chat)
+            return
+
         if incoming.image_path and msg_type == "image":
             description = self._describe_image(incoming)
             if description:
@@ -716,12 +723,18 @@ class BotService:
             at_name = self_name if include_self_name else ""
             at_me = at_mentioned(raw_content, at_name, ["阿洛娜", "Arona"])
             at_persona = at_mentioned(raw_content, "", ["阿洛娜", "Arona"])
+            trigger_enabled = bool(self.config.bot.get("trigger_enabled", True))
+            trigger_words = self.config.bot.get("trigger_keywords") or []
+            trigger_hit = bool(trigger_enabled and any(
+                str(word).strip() and str(word).lower() in raw_content.lower()
+                for word in trigger_words
+            ))
             self_mentioned = bool(
                 self_name and
                 (f"@{self_name}" in raw_content or f"＠{self_name}" in raw_content)
             )
             at_always = bool(self.config.bot.get("group_at_always_reply", True))
-            group_at_me = at_me
+            group_at_me = at_me or trigger_hit
             group_at_always = at_always
             probability_enabled = bool(
                 self.config.bot.get("group_probability_reply", True)
@@ -737,6 +750,9 @@ class BotService:
             elif at_me and at_always:
                 should_reply = True
                 reason = "群聊 @ 必回复"
+            elif trigger_hit:
+                should_reply = True
+                reason = "群聊关键词触发"
             elif probability_enabled:
                 should_reply = random.random() < probability
                 reason = (f"群聊{'@' if at_me else '未 @'} · "
@@ -985,6 +1001,10 @@ class BotService:
             history = self.memory.recent_after(chat, after_id, limit)
         else:
             history = self.memory.recent(chat, limit)
+        stale_minutes = max(1, min(1440, int(self.config.bot.get("stale_reply_minutes", 10))))
+        cutoff = time.time() - stale_minutes * 60
+        history = [item for item in history
+                   if float(item.get("created_at") or 0) >= cutoff]
         return history, summary_text
 
     # ----------------------------------------------------------- kivotos news
@@ -996,24 +1016,26 @@ class BotService:
                 log.debug("基沃托斯新闻定时检查失败：%s", exc)
 
     def _news_tick(self) -> None:
-        if not self.news.enabled:
+        targets = self.news.enabled_targets()
+        if not targets:
             return
-        target = self.news.target_chat
-        if not target:
-            return
-        if self._admin_sessions or self._is_muted(target):
+        if self._admin_sessions:
             return
         adapter = self.adapter
         if not adapter:
             return
-        result = self.news.run(adapter)
-        if result.get("sent"):
-            self.emit("news", {"target": target, "message": result.get("message", "")})
-        elif result.get("reason") not in {
-            "功能关闭", "未设置发送群聊", "还没到发送时间",
-            "今天已经发送过", "上次尝试失败，稍后重试",
-        }:
-            log.info("基沃托斯新闻本次未发送 · %s", result.get("reason"))
+        for target in targets:
+            name = str(target.get("name", ""))
+            if not name or self._is_muted(name):
+                continue
+            result = self.news.run(adapter, target=target)
+            if result.get("sent"):
+                self.emit("news", {"target": name, "message": result.get("message", "")})
+            elif result.get("reason") not in {
+                "功能关闭", "还没到发送时间", "今天已经发送过",
+                "上次尝试失败，稍后重试",
+            }:
+                log.info("基沃托斯新闻本次未发送 · %s · %s", name, result.get("reason"))
 
     def send_news_now(self) -> dict:
         adapter = self.adapter
@@ -1125,6 +1147,13 @@ class BotService:
         )
         return text
 
+    def _apply_reply_style(self, text: str) -> str:
+        if not bool(self.config.bot.get("replace_punctuation", False)):
+            return text
+        text = re.sub(r"[。，；,;]", " ", text or "")
+        text = re.sub(r"[ \t]{2,}", " ", text).strip()
+        return text
+
     def _generate_and_send(self, incoming: IncomingMessage, target: dict, row_id: int,
                            user_content: str) -> None:
         persona = self.personas.get(target.get("persona_id") or self.config.data.get("active_persona_id"))
@@ -1221,6 +1250,7 @@ class BotService:
             max_sentences=2,
             allow_sticker=allow_sticker,
         )
+        text = self._apply_reply_style(text)
         if chosen is None and allow_sticker and not is_serious(user_content):
             chosen = select_fallback_sticker(
                 stickers, text, user_content,
@@ -1252,7 +1282,15 @@ class BotService:
         sticker_sent = False
         send_message = ""
         if text:
-            send_result = self._adapter.send_text(incoming.chat, text)
+            quote_enabled = bool(self.config.bot.get("quote_reply", False))
+            if quote_enabled and hasattr(self._adapter, "send_quoted_text"):
+                send_result = self._adapter.send_quoted_text(incoming.chat, text)
+                if not send_result.ok:
+                    log.warning("引用发送失败，改为普通发送：%s · %s",
+                                incoming.chat, send_result.message)
+                    send_result = self._adapter.send_text(incoming.chat, text)
+            else:
+                send_result = self._adapter.send_text(incoming.chat, text)
             if not send_result.ok:
                 log.error("发送文字到 %s 失败：%s %s", incoming.chat,
                           send_result.message, send_result.detail)

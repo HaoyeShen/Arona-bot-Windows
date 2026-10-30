@@ -57,7 +57,7 @@ def main() -> int:
         app._bot_action_busy = False
         app.refresh_header()
         assert not app.topbar.action._busy, "refresh_header must clear stale busy state"
-        for key in ("dashboard", "debug", "monitor", "stickers", "targets", "personas",
+        for key in ("dashboard", "debug", "monitor", "stickers", "targets", "listen_reply", "personas",
                     "models", "training", "logs", "settings"):
             app.show_page(key)
             root.update_idletasks()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import threading
 import tkinter as tk
 import zipfile
 from datetime import datetime
@@ -70,64 +69,6 @@ class SettingsPage(BasePage):
         left.grid(row=0, column=0, sticky="nsew", padx=(0, px(7)))
         right = tk.Frame(columns, bg=C["bg"])
         right.grid(row=0, column=1, sticky="nsew", padx=(px(7), 0))
-
-        reply = Card(left, padding=16, accent=C["cyan"])
-        reply.pack(fill="x")
-        SectionHeading(reply.body, "回复行为", "怎么回、什么时候回").pack(fill="x", pady=(0, px(10)))
-        self.auto_reply = ToggleRow(reply.body, "自动回复",
-                                     "关闭后仍会记录消息与上下文，但不会发回微信。",
-                                     self.config.bot.get("auto_reply", True))
-        self.auto_reply.pack(fill="x", pady=px(5))
-        self.auto_start = ToggleRow(reply.body, "启动 ARONA 时自动连接",
-                                     "打开程序后自动开始监听，无需再点「启动机器人」。",
-                                     self.config.bot.get("auto_start", True))
-        self.auto_start.pack(fill="x", pady=px(5))
-        self.auto_sticker = ToggleRow(reply.body, "允许使用表情包",
-                                       "阿洛娜会结合语境从已启用的表情包里语义选择。",
-                                       self.config.bot.get("auto_sticker", True))
-        self.auto_sticker.pack(fill="x", pady=px(5))
-        self.quiet = ToggleRow(reply.body, "免打扰时段",
-                                "该时段内只记录消息，不自动回复。",
-                                self.config.bot.get("quiet_hours_enabled", False))
-        self.quiet.pack(fill="x", pady=px(5))
-
-        quiet_times = tk.Frame(reply.body, bg=C["card"])
-        quiet_times.pack(fill="x", pady=(px(4), px(8)))
-        self.quiet_start = LabeledEntry(quiet_times, "开始", self.config.bot.get("quiet_start", "23:30"),
-                                        hint="HH:MM", width=8)
-        self.quiet_start.pack(side="left", fill="x", expand=True, padx=(0, px(5)))
-        self.quiet_end = LabeledEntry(quiet_times, "结束", self.config.bot.get("quiet_end", "07:30"),
-                                      hint="HH:MM", width=8)
-        self.quiet_end.pack(side="left", fill="x", expand=True, padx=(px(5), 0))
-
-        group_frame = tk.Frame(reply.body, bg=C["card"])
-        group_frame.pack(fill="x", pady=(px(4), 0))
-        self.group_at_always = ToggleRow(
-            group_frame, "群聊 @ 后必回复",
-            "被 @ 时不管概率多少，都会回复。",
-            self.config.bot.get("group_at_always_reply", True),
-        )
-        self.group_at_always.pack(fill="x")
-        self.group_at_self_name = ToggleRow(
-            group_frame, "群聊 @ 我的微信昵称也触发",
-            "关闭后只认 @阿洛娜 / @ARONA，不把登录账号昵称算作 @。",
-            self.config.bot.get("group_at_include_self_name", True),
-        )
-        self.group_at_self_name.pack(fill="x")
-        self.group_probability = ToggleRow(
-            group_frame, "群聊未 @ 概率回复",
-            "没被 @ 时按下面的概率决定是否回复；关闭后未 @ 一律不回复。",
-            self.config.bot.get("group_probability_reply", True),
-        )
-        self.group_probability.pack(fill="x")
-        probability_row = tk.Frame(group_frame, bg=C["card"])
-        probability_row.pack(fill="x", pady=(px(4), 0))
-        self.group_probability_value = LabeledEntry(
-            probability_row, "未 @ 回复概率（%）",
-            str(round(float(self.config.bot.get("group_reply_probability", 0.3)) * 100)),
-            hint="0–100", width=8,
-        )
-        self.group_probability_value.pack(fill="x")
 
         context = Card(left, padding=16)
         context.pack(fill="x", pady=(px(12), 0))
@@ -257,49 +198,6 @@ class SettingsPage(BasePage):
             wraplength=px(420),
         ).pack(fill="x", pady=(px(4), 0))
 
-        news = Card(right, padding=16, accent=C["pink"])
-        news.pack(fill="x", pady=(px(12), 0))
-        SectionHeading(news.body, "基沃托斯新闻", "每天早上自动搜集并发送一次").pack(
-            fill="x", pady=(0, px(8))
-        )
-        self.news_enabled = ToggleRow(
-            news.body, "开启每日新闻",
-            "关闭后不会联网搜索；开启后每天只在一个群发送一次。",
-            bool(self.config.data.get("news", {}).get("enabled", False)),
-        )
-        self.news_enabled.pack(fill="x", pady=px(4))
-        news_time_row = tk.Frame(news.body, bg=C["card"])
-        news_time_row.pack(fill="x", pady=(px(4), px(7)))
-        self.news_time = LabeledEntry(
-            news_time_row, "发送时间",
-            str(self.config.data.get("news", {}).get("send_time", "06:50")),
-            hint="HH:MM", width=8,
-        )
-        self.news_time.pack(side="left", fill="x", expand=True, padx=(0, px(6)))
-        tk.Label(news_time_row, text="发送群聊", bg=C["card"], fg=C["text_soft"],
-                 font=font(8, "bold")).pack(side="left", padx=(0, px(4)))
-        self.news_target = ttk.Combobox(
-            news_time_row, state="readonly", style="Arona.TCombobox", font=font(9),
-        )
-        self.news_target.pack(side="left", fill="x", expand=True)
-        self._refresh_news_targets()
-        tk.Label(
-            news.body,
-            text="三个板块会标注国服 / 日服 / 国际服；来源模糊、非官方或爆料内容会自动标注「未确认」。",
-            bg=C["card"], fg=C["muted"], font=font(7), anchor="w", justify="left",
-            wraplength=px(420),
-        ).pack(fill="x", pady=(px(3), 0))
-        news_actions = tk.Frame(news.body, bg=C["card"])
-        news_actions.pack(fill="x", pady=(px(7), 0))
-        RoundedButton(
-            news_actions, text="立即发送测试", command=self.test_news,
-            style="ghost", width=106, height=28, bg=C["card"], font_size=7,
-        ).pack(side="left")
-        tk.Label(
-            news_actions, text="不会占用当天 06:50 的正式发送",
-            bg=C["card"], fg=C["muted"], font=font(7),
-        ).pack(side="left", padx=(px(6), 0))
-
         privacy = Card(right, padding=16)
         privacy.pack(fill="x", pady=(px(12), 0))
         SectionHeading(privacy.body, "隐私与日志", "数据留在本机").pack(fill="x", pady=(0, px(10)))
@@ -342,30 +240,19 @@ class SettingsPage(BasePage):
                  anchor="w", wraplength=px(900)).pack(fill="x", pady=(px(5), 0))
 
     # ------------------------------------------------------------------
-    def _refresh_news_targets(self) -> None:
-        names = [str(t.get("name", "")) for t in self.config.enabled_targets()
-                 if t.get("type") == "group" and t.get("name")]
-        values = ["不发送"] + names
-        self.news_target["values"] = values
-        current = str(self.config.data.get("news", {}).get("target_chat", "") or "")
-        self.news_target.set(current if current in names else "不发送")
-
     def _load(self) -> None:
-        self._refresh_news_targets()
         mapping = {"auto": "自动选择",
                    "wechatauto": "本地数据库 + UIA（4.1.15）"}
         self.backend.set(mapping.get(self.config.wechat.get("backend", "auto"), "自动选择"))
 
     def on_show(self) -> None:
         self._load()
-        self._refresh_news_targets()
 
     def save(self) -> None:
         try:
             context_limit = max(20, min(100, int(self.context_limit.get())))
             max_chars = max(8, min(1800, int(self.max_chars.get() or 23)))
             sentence_chars = max(8, min(80, int(self.sentence_chars.get() or 23)))
-            group_probability = max(0, min(100, int(float(self.group_probability_value.get() or 30))))
             summary_threshold = max(2000, min(50000, int(self.summary_threshold.get() or 6000)))
             summary_keep = max(4, min(60, int(self.summary_keep.get() or 12)))
             summary_interval = max(30, min(86400, int(self.summary_interval.get() or 300)))
@@ -374,44 +261,19 @@ class SettingsPage(BasePage):
             delay_max = max(delay_min, min(30.0, float(self.delay_max.get())))
             cooldown = max(0.0, min(600.0, float(self.cooldown.get())))
             probability = max(0.0, min(1.0, float(self.sticker_prob.get())))
-            if self.quiet.get():
-                if not self.quiet_start.get() or not self.quiet_end.get():
-                    raise ValueError("免打扰时段不能为空")
-            for time_value in (self.quiet_start.get(), self.quiet_end.get(),
-                               self.news_time.get()):
-                if time_value:
-                    datetime.strptime(time_value, "%H:%M")
-            news_target = self.news_target.get()
-            news_target = "" if news_target in ("", "不发送") else news_target
-            if self.news_enabled.get() and not news_target:
-                raise ValueError("开启基沃托斯新闻时必须选择一个群聊")
-            if news_target:
-                target = self.config.target_by_name(news_target)
-                if not target or target.get("type") != "group":
-                    raise ValueError("基沃托斯新闻只能发送到群聊")
         except ValueError as exc:
             self.app.toast("设置格式不正确：请检查数字与时间（HH:MM）。", "error")
             return
         backend_before = self.config.wechat.get("backend", "auto")
         bot = self.config.bot
         bot.update({
-            "auto_reply": self.auto_reply.get(),
-            "auto_start": self.auto_start.get(),
-            "auto_sticker": self.auto_sticker.get(),
-            "quiet_hours_enabled": self.quiet.get(),
-            "quiet_start": self.quiet_start.get(),
-            "quiet_end": self.quiet_end.get(),
             "context_limit": context_limit,
             "max_reply_chars": max_chars,
             "max_sentence_chars": sentence_chars,
-            "group_at_always_reply": self.group_at_always.get(),
-            "group_at_include_self_name": self.group_at_self_name.get(),
             "context_summary_enabled": True,
             "context_summary_threshold_chars": summary_threshold,
             "context_summary_keep_messages": summary_keep,
             "context_summary_interval_seconds": summary_interval,
-            "group_probability_reply": self.group_probability.get(),
-            "group_reply_probability": group_probability / 100.0,
             "max_stickers_per_reply": max_stickers,
             "reply_delay_min": delay_min,
             "reply_delay_max": delay_max,
@@ -434,11 +296,6 @@ class SettingsPage(BasePage):
         allowed = [line.strip() for line in self.admin_allowed.get("1.0", "end").splitlines()
                    if line.strip()]
         self.config.data["admin"]["allowed"] = allowed or ["__self__"]
-        self.config.data.setdefault("news", {}).update({
-            "enabled": self.news_enabled.get(),
-            "send_time": self.news_time.get().strip() or "06:50",
-            "target_chat": news_target,
-        })
         self.config.save()
         self.service.reload_config()
         self.status.configure(text="已保存 · " + datetime.now().strftime("%H:%M:%S"),
@@ -450,38 +307,6 @@ class SettingsPage(BasePage):
                        "微信适配器已更改，需要重启机器人才能生效。现在重启吗？",
                        ok_text="立即重启", icon=self.icon):
                 self.app.restart_bot()
-
-    def test_news(self) -> None:
-        if not confirm(
-            self.winfo_toplevel(), "发送新闻测试",
-            "现在联网搜集一次基沃托斯新闻，并发送到当前选择的群聊？\n"
-            "测试不会占用当天 06:50 的正式发送。",
-            ok_text="立即发送", icon=self.icon,
-        ):
-            return
-        self.save()
-        news = self.config.data.get("news", {})
-        if not news.get("enabled") or not news.get("target_chat"):
-            self.app.toast("请先开启新闻并选择发送群聊。", "error")
-            return
-        self.app.toast("正在搜集基沃托斯新闻…", "info")
-
-        def worker() -> None:
-            try:
-                result = self.service.send_news_now()
-            except Exception as exc:
-                message = str(exc)
-                self.after(0, lambda message=message: self.app.toast(
-                    "新闻测试失败：" + message, "error"))
-                return
-            if result.get("sent"):
-                self.after(0, lambda: self.app.toast("新闻测试已发送。", "success"))
-            else:
-                reason = str(result.get("reason") or "没有可用新闻")
-                self.after(0, lambda reason=reason: self.app.toast(
-                    "新闻测试未发送：" + reason, "warn"))
-
-        threading.Thread(target=worker, daemon=True).start()
 
     def clear_context(self) -> None:
         if not confirm(self.winfo_toplevel(), "清空全部上下文",

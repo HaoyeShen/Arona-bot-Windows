@@ -341,9 +341,22 @@ class NewsService:
     def settings(self) -> dict:
         return self.config.data.setdefault("news", {})
 
+    def enabled_targets(self) -> list[dict]:
+        """Groups with their own news switch, or the legacy global target."""
+        per_target = [t for t in self.config.enabled_targets()
+                      if t.get("type") == "group" and bool(t.get("news_enabled", False))]
+        if per_target:
+            return per_target
+        legacy = self.config.target_by_name(self.target_chat)
+        if (not self.settings.get("per_target")
+                and self.settings.get("enabled", False) and legacy
+                and legacy.get("type") == "group" and legacy.get("enabled", True)):
+            return [legacy]
+        return []
+
     @property
     def enabled(self) -> bool:
-        return bool(self.settings.get("enabled", False))
+        return bool(self.enabled_targets())
 
     @property
     def target_chat(self) -> str:
@@ -353,13 +366,14 @@ class NewsService:
     def send_time(self) -> str:
         return str(self.settings.get("send_time", DEFAULT_TIME)).strip() or DEFAULT_TIME
 
-    def _target_is_group(self) -> bool:
-        target = self.config.target_by_name(self.target_chat)
-        return bool(target and target.get("type") == "group" and target.get("enabled", True))
+    @staticmethod
+    def _target_time(target: dict) -> str:
+        return str(target.get("news_time") or DEFAULT_TIME).strip() or DEFAULT_TIME
 
-    def _minutes(self) -> tuple[int, int]:
+    @staticmethod
+    def _parse_time(value: str) -> tuple[int, int]:
         try:
-            hour, minute = self.send_time.split(":", 1)
+            hour, minute = str(value or DEFAULT_TIME).split(":", 1)
             return max(0, min(23, int(hour))), max(0, min(59, int(minute)))
         except (TypeError, ValueError):
             return 6, 50
@@ -386,32 +400,56 @@ class NewsService:
         except OSError as exc:
             log.warning("写入新闻状态失败：%s", exc)
 
-    def last_sent_date(self) -> str:
-        return str(self._load_state().get("last_sent_date", ""))
+    def _sent_dates(self) -> dict:
+        state = self._load_state()
+        dates = state.get("sent_dates")
+        if not isinstance(dates, dict):
+            dates = {}
+        legacy_target = str(state.get("last_target") or "")
+        legacy_date = str(state.get("last_sent_date") or "")
+        if legacy_target and legacy_date:
+            dates.setdefault(legacy_target, legacy_date)
+        return dates
 
-    def should_run(self, now: datetime | None = None) -> tuple[bool, str]:
-        if not self.enabled:
-            return False, "功能关闭"
-        if not self.target_chat:
-            return False, "未设置发送群聊"
-        if not self._target_is_group():
-            return False, "目标群聊不存在或不是群聊"
+    def _attempts(self) -> dict:
+        values = self._load_state().get("attempts")
+        return values if isinstance(values, dict) else {}
+
+    def last_sent_date(self, chat: str = "") -> str:
+        dates = self._sent_dates()
+        if chat:
+            return str(dates.get(chat, ""))
+        return max(dates.values(), default="") or str(
+            self._load_state().get("last_sent_date", ""))
+
+    def should_run_for(self, target: dict, now: datetime | None = None) -> tuple[bool, str]:
+        if not target or target.get("type") != "group" or not target.get("enabled", True):
+            return False, "目标群聊不可用"
         current = now or datetime.now()
         today = current.date().isoformat()
-        state = self._load_state()
-        if state.get("last_sent_date") == today:
+        if self._sent_dates().get(str(target.get("name", ""))) == today:
             return False, "今天已经发送过"
-        hour, minute = self._minutes()
+        hour, minute = self._parse_time(self._target_time(target))
         due = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if current < due:
             return False, "还没到发送时间"
-        # Do not send yesterday's news at dinner time after a long downtime.
-        if current.hour >= 12:
+        if (current - due).total_seconds() > 6 * 3600:
             return False, "已过早间补发窗口"
-        attempt = float(state.get("last_attempt_ts", 0) or 0)
+        attempt = float(self._attempts().get(str(target.get("name", "")), 0) or 0)
         if attempt and time.time() - attempt < 30 * 60:
             return False, "上次尝试失败，稍后重试"
         return True, "可以发送"
+
+    def should_run(self, now: datetime | None = None) -> tuple[bool, str]:
+        targets = self.enabled_targets()
+        if not targets:
+            return False, "功能关闭"
+        for target in targets:
+            ok, reason = self.should_run_for(target, now)
+            if ok:
+                return True, "可以发送"
+        return False, reason
+
 
     # ------------------------------------------------------------------ fetch
     def _search(self, query: str, region: str, mkt: str, timeout: float) -> list[NewsItem]:
@@ -874,23 +912,41 @@ class NewsService:
         self._save_state({"seen_titles": pruned})
 
     # ------------------------------------------------------------------- send
-    def run(self, adapter, now: datetime | None = None, force: bool = False) -> dict:
+    def run(self, adapter, target: dict | None = None,
+            now: datetime | None = None, force: bool = False) -> dict:
         with self._lock:
             current = now or datetime.now()
+            targets = self.enabled_targets()
+            if target is None:
+                if not targets:
+                    if self.settings.get("enabled") and self.target_chat:
+                        return {"sent": False, "reason": "目标群聊不可用：不是群聊"}
+                    return {"sent": False, "reason": "功能关闭"}
+                if force:
+                    target = targets[0]
+                else:
+                    reason = "还没到发送时间"
+                    for candidate in targets:
+                        ok, candidate_reason = self.should_run_for(candidate, current)
+                        reason = candidate_reason
+                        if ok:
+                            target = candidate
+                            break
+                    if target is None:
+                        return {"sent": False, "reason": reason}
             if not force:
-                ok, reason = self.should_run(current)
+                ok, reason = self.should_run_for(target, current)
                 if not ok:
                     return {"sent": False, "reason": reason}
-            if not self.enabled:
-                return {"sent": False, "reason": "功能关闭"}
-            target = self.target_chat
-            if not target or not self._target_is_group():
+            target_name = str(target.get("name", ""))
+            if not target_name:
                 return {"sent": False, "reason": "目标群聊不可用"}
             if not force:
-                self._save_state({
-                    "last_attempt_ts": time.time(),
-                    "last_attempt_date": current.date().isoformat(),
-                })
+                attempts = self._attempts()
+                attempts[target_name] = time.time()
+                self._save_state({"attempts": attempts,
+                                  "last_attempt_ts": time.time(),
+                                  "last_attempt_date": current.date().isoformat()})
             grouped = self.fetch()
             grouped = self._filter_seen(
                 grouped, max(1, min(3, int(self.settings.get("max_items", 2) or 2)))
@@ -905,7 +961,7 @@ class NewsService:
             if usage_result is not None and self.usage_callback:
                 self.usage_callback(usage_result, "news")
             try:
-                result = adapter.send_text(target, message)
+                result = adapter.send_text(target_name, message)
             except Exception as exc:
                 self._save_state({"last_error": str(exc)})
                 log.warning("基沃托斯新闻发送失败：%s", exc)
@@ -913,22 +969,25 @@ class NewsService:
             if not getattr(result, "ok", False):
                 error = getattr(result, "error", "") or "发送失败"
                 self._save_state({"last_error": error})
-                log.warning("基沃托斯新闻发送失败 · %s · %s", target, error)
+                log.warning("基沃托斯新闻发送失败 · %s · %s", target_name, error)
                 return {"sent": False, "reason": error, "message": message}
             patch = {
                 "last_sent_at": current.isoformat(timespec="seconds"),
-                "last_target": target,
+                "last_target": target_name,
                 "last_error": "",
                 "last_preview": message[:300],
             }
-            # A manual test send must not consume the real 06:50 slot.
+            # A manual test send must not consume the real daily slot.
             if not force:
+                dates = self._sent_dates()
+                dates[target_name] = current.date().isoformat()
+                patch["sent_dates"] = dates
                 patch["last_sent_date"] = current.date().isoformat()
             self._save_state(patch)
             if not force:
                 self._mark_seen(grouped)
-            log.info("基沃托斯新闻已发送 · %s · %d 字", target, len(message))
-            return {"sent": True, "target": target, "message": message,
+            log.info("基沃托斯新闻已发送 · %s · %d 字", target_name, len(message))
+            return {"sent": True, "target": target_name, "message": message,
                     "usage": usage_result}
 
     def preview(self) -> dict:

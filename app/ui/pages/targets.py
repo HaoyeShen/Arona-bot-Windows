@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk
 
 from ...ui.theme import C, display_font, font, px, truncate
@@ -23,8 +24,8 @@ class TargetDialog(BaseDialog):
     def __init__(self, parent, page: "TargetsPage", target: dict) -> None:
         self.page = page
         self.target = target
-        super().__init__(parent, "编辑监听对象", "只有白名单中的会话会被回复", width=560,
-                         height=620, icon=page.icon)
+        super().__init__(parent, "编辑测试对象", "只有白名单中的会话会被回复", width=560,
+                         height=670, icon=page.icon)
         body = tk.Frame(self.body, bg=C["card"])
         body.pack(fill="both", expand=True, padx=px(24), pady=px(20))
         self.name = LabeledEntry(body, "微信显示名称", target.get("name", ""),
@@ -74,6 +75,20 @@ class TargetDialog(BaseDialog):
             hint="仅群聊生效", width=10,
         )
         self.group_probability.pack(side="left", fill="x", expand=True)
+        news_frame = tk.Frame(body, bg=C["card"])
+        news_frame.pack(fill="x", pady=(px(2), px(8)))
+        self.news_enabled = tk.BooleanVar(value=bool(target.get("news_enabled", False)))
+        tk.Checkbutton(
+            news_frame, text="每日基沃托斯新闻", variable=self.news_enabled,
+            bg=C["card"], fg=C["text"], activebackground=C["card"],
+            activeforeground=C["text"], selectcolor=C["card_soft"],
+            font=font(9, "bold"), anchor="w", cursor="hand2",
+        ).pack(side="left")
+        self.news_time = LabeledEntry(
+            news_frame, "发送时间", str(target.get("news_time", "06:50")),
+            hint="HH:MM", width=8,
+        )
+        self.news_time.pack(side="left", fill="x", expand=True, padx=(px(10), 0))
         self.note = LabeledEntry(body, "备注（可选）", target.get("note", ""), width=30)
         self.note.pack(fill="x", pady=(px(4), 0))
         self.error = tk.Label(body, text="", bg=C["card"], fg=C["red"], font=font(8),
@@ -93,6 +108,9 @@ class TargetDialog(BaseDialog):
             group_probability = max(0.0, min(1.0, float(
                 self.group_probability.get() or self.page.config.bot.get("group_reply_probability", 0.3)
             )))
+            news_time = self.news_time.get().strip() or "06:50"
+            datetime.strptime(news_time, "%H:%M")
+            news_enabled = bool(self.news_enabled.get())
         except ValueError:
             self.error.configure(text="上下文条数和回复概率必须是数字。")
             return
@@ -107,13 +125,15 @@ class TargetDialog(BaseDialog):
                 "context_limit": context,
                 "reply_probability": probability,
                 "group_reply_probability": group_probability,
+                "news_enabled": news_enabled,
+                "news_time": news_time,
                 "require_at": bool(self.target.get("require_at", True)),
                 "note": self.note.get(),
             })
             self.close()
             self.page.refresh()
             self.page.app.reload_listening()
-            self.page.app.toast("监听对象已更新。", "success")
+            self.page.app.toast("测试对象已更新。", "success")
         except Exception as exc:
             self.error.configure(text=str(exc))
 
@@ -151,8 +171,11 @@ class TargetRow(tk.Frame):
         probability_note = ""
         if target.get("type") == "group":
             probability_note = f"  ·  未@概率 {round(float(target.get('group_reply_probability', 0.3)) * 100)}%"
+        news_note = ""
+        if target.get("news_enabled"):
+            news_note = f"  ·  新闻 {target.get('news_time', '06:50')}"
         note = (f"人格：{persona.get('name', '阿洛娜')}  ·  已存 {context_count} 条上下文"
-                f"  ·  上下文窗口 {target.get('context_limit', 30)}{probability_note}")
+                f"  ·  上下文窗口 {target.get('context_limit', 30)}{probability_note}{news_note}")
         if target.get("note"):
             note += "  ·  " + truncate(target.get("note"), 26)
         tk.Label(mid, text=note, bg=bg, fg=C["muted"], font=font(8), anchor="w").pack(fill="x")
@@ -173,8 +196,8 @@ class TargetRow(tk.Frame):
 
 class TargetsPage(BasePage):
     key = "targets"
-    title = "监听对象"
-    subtitle = "只把消息交给阿洛娜，也只回复老师允许的会话。"
+    title = "测试对象"
+    subtitle = "只把消息交给阿洛娜，也只回复老师允许的会话；新闻发送也在这里按群设置。"
 
     def __init__(self, parent, app) -> None:
         super().__init__(parent, app)
@@ -196,7 +219,7 @@ class TargetsPage(BasePage):
             side="left", padx=(px(16), px(10)))
         text = tk.Frame(banner, bg=C["sidebar"])
         text.pack(side="left", fill="both", expand=True, pady=px(12))
-        tk.Label(text, text="白名单之外，阿洛娜不会回复任何人", bg=C["sidebar"], fg="white",
+        tk.Label(text, text="测试对象之外，阿洛娜不会回复任何人", bg=C["sidebar"], fg="white",
                  font=font(10, "bold"), anchor="w").pack(fill="x")
         tk.Label(text, text="名称必须和微信聊天窗口标题完全一致；修改后会热更新监听，不会打断回复线程。",
                  bg=C["sidebar"], fg=C["nav_text"], font=font(8), anchor="w").pack(fill="x")
@@ -205,7 +228,7 @@ class TargetsPage(BasePage):
 
         add_card = Card(wrap, padding=16, accent=C["cyan"])
         add_card.pack(fill="x", pady=(0, px(14)))
-        tk.Label(add_card.body, text="添加监听对象", bg=C["card"], fg=C["text"],
+        tk.Label(add_card.body, text="添加测试对象", bg=C["card"], fg=C["text"],
                  font=font(10, "bold"), anchor="w").pack(fill="x", pady=(0, px(8)))
         row = tk.Frame(add_card.body, bg=C["card"])
         row.pack(fill="x")
@@ -272,7 +295,7 @@ class TargetsPage(BasePage):
             empty = Card(self.list_frame, padding=30)
             empty.pack(fill="x")
             tk.Label(empty.body, text="◎", bg=C["card"], fg=C["cyan"], font=font(30)).pack()
-            tk.Label(empty.body, text="还没有监听对象", bg=C["card"], fg=C["text"],
+            tk.Label(empty.body, text="还没有测试对象", bg=C["card"], fg=C["text"],
                      font=font(12, "bold")).pack(pady=(px(4), px(2)))
             tk.Label(empty.body, text="在上方输入微信窗口显示的完整名称，或先用「文件传输助手」做本地测试。\n"
                                        "未加入白名单的会话永远不会收到自动回复。",
@@ -300,7 +323,7 @@ class TargetsPage(BasePage):
             self.add_error.configure(text="")
             self.refresh()
             self.app.reload_listening()
-            self.app.toast(f"已添加监听对象：{name}", "success")
+            self.app.toast(f"已添加测试对象：{name}", "success")
         except Exception as exc:
             self.add_error.configure(text=str(exc))
 
@@ -314,17 +337,17 @@ class TargetsPage(BasePage):
             self.app.toast(("已启用监听：" if value else "已暂停监听：") + target.get("name", ""),
                            "info")
         except Exception as exc:
-            self.app.toast("更新监听对象失败：" + str(exc), "error")
+            self.app.toast("更新测试对象失败：" + str(exc), "error")
         self.refresh()
 
     def delete(self, target: dict) -> None:
-        if confirm(self.winfo_toplevel(), "移除监听对象",
+        if confirm(self.winfo_toplevel(), "移除测试对象",
                    f"确定不再监听「{target.get('name', '')}」吗？\n已保存的上下文不会自动删除。",
                    ok_text="移除", danger=True, icon=self.icon):
             self.config.delete_target(target["id"])
             self.refresh()
             self.app.reload_listening()
-            self.app.toast("监听对象已移除。", "info")
+            self.app.toast("测试对象已移除。", "info")
 
     def sync(self, target: dict) -> None:
         if not self.service.running:
