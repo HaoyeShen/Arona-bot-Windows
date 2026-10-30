@@ -1106,6 +1106,25 @@ class BotService:
         finally:
             self._summary_lock.release()
 
+    @staticmethod
+    def _looks_incomplete_reply(text: str) -> bool:
+        """Catch replies that end on a dangling function word after clipping."""
+        value = (text or "").strip().rstrip("。！？!?")
+        if not value:
+            return False
+        return bool(re.search(
+            r"(很|太|非常|真的|一个|这个|那个|能|会|要|把|被|给|对|和|跟|"
+            r"因为|所以|但是|然后|如果|虽然|而且|或者|还是|就是|只是|以及|并且)$",
+            value,
+        ))
+
+    def _natural_reply_text(self, raw: str, stickers: list[dict], allow_sticker: bool) -> str:
+        text, _ = parse_reply(
+            raw, stickers, max_chars=100000, max_sentence_chars=100000,
+            max_sentences=6, allow_sticker=allow_sticker,
+        )
+        return text
+
     def _generate_and_send(self, incoming: IncomingMessage, target: dict, row_id: int,
                            user_content: str) -> None:
         persona = self.personas.get(target.get("persona_id") or self.config.data.get("active_persona_id"))
@@ -1171,10 +1190,34 @@ class BotService:
             return
 
         allow_sticker = bool(stickers) and int(self.config.bot.get("max_stickers_per_reply", 1)) > 0
+        natural = self._natural_reply_text(result.text, stickers, allow_sticker)
+        if (len(natural) > max_chars or self._looks_incomplete_reply(natural)):
+            repair_system = system + (
+                "\n\n【强制重写】你刚才的回答超过长度限制，或者会在发送时被截断。"
+                f"请重新回答，只输出一条完整、自然、口语化的中文回复，整条不超过 {max_chars} 个字，" 
+                "最多 2 句。不要输出半句、省略号、列表或解释；宁可只说一个完整短句。"
+            )
+            try:
+                repaired = client.chat(messages, repair_system)
+                self._record_usage(repaired, incoming.chat, "reply")
+                repaired_natural = self._natural_reply_text(
+                    repaired.text, stickers, allow_sticker
+                )
+                if (repaired_natural and len(repaired_natural) <= max_chars
+                        and not self._looks_incomplete_reply(repaired_natural)):
+                    result = repaired
+                else:
+                    log.warning("重写后回复仍不完整或超长，已跳过发送：%s", incoming.chat)
+                    self.emit("typing_done", {"chat": incoming.chat})
+                    return
+            except Exception as exc:
+                log.warning("回复重写失败，已跳过发送：%s", exc)
+                self.emit("typing_done", {"chat": incoming.chat})
+                return
         text, chosen = parse_reply(
             result.text, stickers,
-            max_chars=int(self.config.bot.get("max_reply_chars", 23)),
-            max_sentence_chars=int(self.config.bot.get("max_sentence_chars", 23)),
+            max_chars=max_chars,
+            max_sentence_chars=max_sentence_chars,
             max_sentences=2,
             allow_sticker=allow_sticker,
         )

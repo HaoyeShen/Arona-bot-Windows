@@ -557,7 +557,7 @@ class ModelClient:
             if match:
                 return f"记住啦，口令是{match.group(1).strip()}。"
         if any(w in clean for w in ("累", "难受", "不开心", "压力", "烦")):
-            return "老师辛苦啦。先深呼吸一下，把肩膀放松一点。剩下的，阿洛娜陪老师慢慢来。 [sticker:小小委屈]"
+            return "老师辛苦啦，先休息一下。 [sticker:小小委屈]"
         if any(w in clean for w in ("表情", "贴纸")):
             return "给老师一张！今天也要开开心心的。 [sticker:开心转圈]"
         if "喜欢" in clean and ("什么" in clean or "吗" in clean):
@@ -572,8 +572,7 @@ class ModelClient:
             return "我是阿洛娜，什亭之匣的主控 AI，也是老师的导航员。请多指教，老师！"
         if any(w in clean for w in ("晚安", "睡觉", "困")):
             return "老师晚安。今天已经很努力了，剩下的交给明天吧。阿洛娜会守着什亭之匣的。 [sticker:困困打盹]"
-        short = clean[:28] + ("…" if len(clean) > 28 else "")
-        return f"唔……阿洛娜听到老师说的“{short}”了。可以再和我多讲一点吗？我想更明白老师现在的心情。"
+        return "老师，阿洛娜在听，能再多说一点吗？"
 
 
 def make_client(profile: dict) -> ModelClient:
